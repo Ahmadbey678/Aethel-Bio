@@ -176,6 +176,14 @@ function sanitizeSearchTerms(disease: string, mutation: string): SanitizedTerms 
   return { cleanGene, cleanDisease };
 }
 
+/**
+ * Check whether AI-extracted data contains meaningful biomarker/condition
+ * values that indicate a genuine pathology or NGS report was processed.
+ */
+function isValidReport(data: PatientProfile): boolean {
+  return !!(data.biomarker?.trim() || data.condition?.trim());
+}
+
 function normalizePhase(phases?: string[]): string {
   if (!phases || phases.length === 0) return "N/A";
   return phases
@@ -508,6 +516,18 @@ export default function App() {
 
       const { data } = result;
 
+      // Validate that the extraction produced meaningful biomarker/disease data
+      if (!isValidReport(data)) {
+        setIsValidMedicalDoc(false);
+        setError("⚠️ Invalid Document: Uploaded file is not a recognized Pathology or NGS report.");
+        setPatientProfile(null);
+        setBiomarker("");
+        setCondition("");
+        return;
+      }
+
+      setIsValidMedicalDoc(true);
+
       // Set the patient profile with AI-extracted data
       setPatientProfile(data);
       setBiomarker(data.biomarker ?? "");
@@ -528,6 +548,7 @@ export default function App() {
     setCondition("");
     setPatientProfile(null);
     setUploadedFileName(null);
+    setIsValidMedicalDoc(null);
     setTrials([]);
     setFullStudies([]);
     setSelectedStudy(null);
@@ -655,6 +676,10 @@ export default function App() {
                   ) : patientProfile ? (
                     <span className="text-accent font-medium">
                       ✓ Extracted
+                    </span>
+                  ) : isValidMedicalDoc === false ? (
+                    <span className="text-destructive font-medium">
+                      ❌ Invalid Report
                     </span>
                   ) : null}
                 </div>
