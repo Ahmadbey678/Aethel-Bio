@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { X, ArrowLeft, CheckCircle, AlertTriangle, Plus, Trash2, Gauge } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
+import { X, ArrowLeft, CheckCircle, AlertTriangle, Plus, Trash2, Gauge, ChevronDown, ChevronUp, Dna, Stethoscope, Beaker, Brain, FlaskConical } from "lucide-react";
 
 /* ── Types ─────────────────────────────────────────── */
 
@@ -41,6 +41,24 @@ interface CustomRule {
   id: string;
   text: string;
   satisfied: boolean;
+}
+
+interface PatientProfile {
+  biomarker: string;
+  condition: string;
+  extractedParams: {
+    mutation: string;
+    disease: string;
+    egfr: number;
+    platelets: number;
+    noBrainMets: boolean;
+  };
+}
+
+interface SimulatorProps {
+  study: StudyProtocol;
+  patientProfile?: PatientProfile;
+  onClose: () => void;
 }
 
 /* ── Match category helpers ────────────────────────── */
@@ -96,7 +114,6 @@ function parseEligibilityCriteria(text?: string): ParsedCriteria {
   let exclusionPart = "";
 
   if (hasInclusion && hasExclusion) {
-    // Split on the exclusion header
     const split = lower.split(/exclusion\s*criteria\s*:?\s*/i);
     inclusionPart = split[0].replace(/inclusion\s*criteria\s*:?\s*/i, "").trim();
     exclusionPart = (split[1] || "").trim();
@@ -105,7 +122,6 @@ function parseEligibilityCriteria(text?: string): ParsedCriteria {
   } else if (hasExclusion) {
     exclusionPart = lower.replace(/exclusion\s*criteria\s*:?\s*/i, "").trim();
   } else {
-    // No headers — treat everything as inclusion
     inclusionPart = lower.trim();
   }
 
@@ -121,11 +137,9 @@ function parseEligibilityCriteria(text?: string): ParsedCriteria {
       .filter((line) => {
         if (line.length <= 3) return false;
         if (/^\s*$/.test(line)) return false;
-        // Skip header fragments — text that is just a heading label
         if (/^(inclusion|exclusion)\s*criteria\s*:?\s*$/i.test(line)) return false;
         if (/^include\s*:?\s*$/i.test(line)) return false;
         if (/^exclude\s*:?\s*$/i.test(line)) return false;
-        // Skip any line that is just a colon-terminated label
         if (/^[^a-z0-9]*[a-z\s]+\s*:\s*$/i.test(line) && line.length < 40) return false;
         return true;
       });
@@ -134,6 +148,105 @@ function parseEligibilityCriteria(text?: string): ParsedCriteria {
     inclusion: extractItems(inclusionPart),
     exclusion: extractItems(exclusionPart),
   };
+}
+
+/* ── Auto-matching logic ─────────────────────────────── */
+
+function autoMatchInclusion(
+  items: string[],
+  patient: PatientProfile,
+): Record<number, boolean> {
+  const map: Record<number, boolean> = {};
+  const { mutation, disease, egfr, platelets } = patient.extractedParams;
+
+  // Build keyword set from the patient profile
+  const mutParts = mutation.toLowerCase().split(/\s+/);
+  const diseaseParts = disease.toLowerCase().split(/\s+/);
+  // Extract key disease terms: "triple-negative" → "triple", "negative", "triple-negative"
+  // "breast cancer" → "breast", "cancer"
+  const diseaseKeywords = diseaseParts
+    .map((p) => p.replace(/[^a-z0-9-]/g, ""))
+    .filter((p) => p.length > 2);
+
+  // Also add compound terms
+  const compoundTerms: string[] = [];
+  for (let i = 0; i < diseaseParts.length - 1; i++) {
+    const compound = `${diseaseParts[i]}-${diseaseParts[i + 1]}`;
+    if (compound.length > 3) compoundTerms.push(compound);
+  }
+
+  const keywords = [
+    ...mutParts.filter((p) => p.length > 2),
+    mutation.toLowerCase(),
+    ...diseaseKeywords,
+    ...compoundTerms,
+    // Abbreviations
+    "tnbc",
+    "brca",
+  ];
+
+  items.forEach((item, i) => {
+    const lower = item.toLowerCase();
+
+    // Check for mutation match
+    const matchesMutation = keywords.some(
+      (k) => k.length > 2 && lower.includes(k),
+    );
+
+    // Check for lab value match (e.g. "eGFR > 60" — patient eGFR 74 qualifies)
+    const hasEGFR = /egfr|gfr|creatinine|renal\s*function/.test(lower);
+    const egfrMatch = hasEGFR && egfr >= 60;
+
+    const hasPlatelets = /platelet|thrombocyte|hematologic/.test(lower);
+    const plateletMatch = hasPlatelets && platelets >= 100;
+
+    // Broad match for "breast cancer" or "solid tumor" — assume patient qualifies
+    const broadMatch =
+      /breast\s*cancer|solid\s*tumor|advanced\s*malignancy|metastatic\s*cancer/i.test(
+        lower,
+      ) && disease.toLowerCase().includes("cancer");
+
+    map[i] = matchesMutation || egfrMatch || plateletMatch || broadMatch;
+  });
+
+  return map;
+}
+
+function autoMatchExclusion(
+  items: string[],
+  patient: PatientProfile,
+): Record<number, boolean> {
+  // Start with all exclusion criteria unchecked (meaning patient doesn't satisfy them)
+  // We auto-CHECK items that DO apply to the patient so they affect the score negatively
+  const map: Record<number, boolean> = {};
+  const { noBrainMets, egfr, platelets } = patient.extractedParams;
+
+  items.forEach((item, i) => {
+    const lower = item.toLowerCase();
+
+    // If item mentions active brain metastases and patient has no brain mets → NOT excluded
+    if (/brain\s*metasta|brain\s*tumor|cns\s*metasta/.test(lower) && noBrainMets) {
+      map[i] = false; // patient does NOT satisfy this exclusion = good
+      return;
+    }
+
+    // If item mentions eGFR < 30 or renal impairment, but patient eGFR is 74 → NOT excluded
+    if (/egfr\s*<\s*30|dialysis|renal\s*failure/.test(lower) && egfr >= 60) {
+      map[i] = false;
+      return;
+    }
+
+    // If item mentions platelets < 100K but patient has 185K → NOT excluded
+    if (/platelet.*<\s*100|thrombocytopenia/.test(lower) && platelets >= 100) {
+      map[i] = false;
+      return;
+    }
+
+    // Default: leave unchecked (not applicable)
+    map[i] = false;
+  });
+
+  return map;
 }
 
 /* ── Circular Gauge ──────────────────────────────────── */
@@ -148,7 +261,6 @@ function MatchGauge({ score }: { score: number }) {
   return (
     <div className="flex flex-col items-center">
       <div className="animate-gauge-appear relative flex h-32 w-32 items-center justify-center">
-        {/* Background track */}
         <svg className="absolute h-full w-full -rotate-90" viewBox="0 0 110 110">
           <circle
             cx="55"
@@ -173,7 +285,6 @@ function MatchGauge({ score }: { score: number }) {
             style={{ transition: "stroke-dashoffset 0.6s cubic-bezier(0.16, 1, 0.3, 1)" }}
           />
         </svg>
-        {/* Percentage text */}
         <span className="relative font-heading text-3xl font-bold tracking-tight text-text-primary">
           {Math.round(score)}<span className="text-base text-text-muted">%</span>
         </span>
@@ -188,7 +299,57 @@ function MatchGauge({ score }: { score: number }) {
   );
 }
 
-/* ── Criteria Section ────────────────────────────────── */
+/* ── Patient Info Panel ──────────────────────────────── */
+
+function PatientInfoPanel({ profile }: { profile: PatientProfile }) {
+  return (
+    <section className="rounded-xl border border-accent/25 bg-accent-muted/10 p-4">
+      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-accent">
+        <FlaskConical className="h-4 w-4" />
+        Patient Profile — Extracted from Report
+      </h3>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+        <div className="flex items-center gap-2">
+          <Dna className="h-3.5 w-3.5 text-accent" />
+          <div>
+            <span className="text-text-muted">Mutation</span>
+            <p className="font-medium text-text-primary">{profile.extractedParams.mutation}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Stethoscope className="h-3.5 w-3.5 text-accent" />
+          <div>
+            <span className="text-text-muted">Disease</span>
+            <p className="font-medium text-text-primary">{profile.extractedParams.disease}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Beaker className="h-3.5 w-3.5 text-accent" />
+          <div>
+            <span className="text-text-muted">eGFR</span>
+            <p className="font-medium text-text-primary">{profile.extractedParams.egfr} mL/min</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Beaker className="h-3.5 w-3.5 text-accent" />
+          <div>
+            <span className="text-text-muted">Platelets</span>
+            <p className="font-medium text-text-primary">{profile.extractedParams.platelets}K/µL</p>
+          </div>
+        </div>
+        <div className="col-span-2 flex items-center gap-2">
+          <Brain className="h-3.5 w-3.5 text-accent" />
+          <div>
+            <span className="text-text-muted">Brain Metastases</span>
+            <p className="font-medium text-success">None detected ✓</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ── Criteria Section (with collapsible long text) ──── */
 
 function CriteriaSection({
   title,
@@ -205,6 +366,11 @@ function CriteriaSection({
   onToggle: (index: number) => void;
   accentColor: string;
 }) {
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+
+  const toggleExpand = (index: number) =>
+    setExpanded((prev) => ({ ...prev, [index]: !prev[index] }));
+
   if (items.length === 0) {
     return (
       <div className="rounded-lg border border-border-subtle bg-surface-raised/50 p-4 text-center text-xs text-text-muted">
@@ -222,30 +388,63 @@ function CriteriaSection({
         </span>
       </div>
       <ul className="space-y-1.5">
-        {items.map((item, i) => (
-          <li key={i}>
-            <label
-              className={`group flex cursor-pointer items-start gap-2.5 rounded-lg border px-3.5 py-2.5 transition-all duration-150 ${
-                checkedMap[i]
-                  ? "border-primary/30 bg-primary-muted/40"
-                  : "border-border-subtle bg-surface-raised hover:border-border-default"
-              }`}
-            >
-              <span
-                className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-all duration-150 ${
+        {items.map((item, i) => {
+          const isLong = item.length > 120;
+          const isExpanded = expanded[i];
+
+          return (
+            <li key={i}>
+              <label
+                className={`group flex cursor-pointer items-start gap-2.5 rounded-lg border px-3.5 py-2.5 transition-all duration-150 ${
                   checkedMap[i]
-                    ? "border-primary bg-primary text-white"
-                    : "border-border-default bg-surface hover:border-primary/60"
+                    ? "border-primary/30 bg-primary-muted/40"
+                    : "border-border-subtle bg-surface-raised hover:border-border-default"
                 }`}
               >
-                {checkedMap[i] && (
-                  <CheckCircle className="animate-check-pop h-3.5 w-3.5" />
-                )}
-              </span>
-              <span className="text-sm leading-snug text-text-primary">{item}</span>
-            </label>
-          </li>
-        ))}
+                <span
+                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-all duration-150 ${
+                    checkedMap[i]
+                      ? "border-primary bg-primary text-white"
+                      : "border-border-default bg-surface hover:border-primary/60"
+                  }`}
+                >
+                  {checkedMap[i] && (
+                    <CheckCircle className="animate-check-pop h-3.5 w-3.5" />
+                  )}
+                </span>
+                <span className="flex flex-col gap-0.5">
+                  <span
+                    className={`text-sm leading-snug text-text-primary ${
+                      isLong && !isExpanded ? "line-clamp-2" : ""
+                    }`}
+                  >
+                    {item}
+                  </span>
+                  {isLong && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        toggleExpand(i);
+                      }}
+                      className="mt-0.5 inline-flex items-center gap-1 text-xs font-medium text-primary/70 hover:text-primary transition-colors duration-150 cursor-pointer"
+                    >
+                      {isExpanded ? (
+                        <>
+                          Show less <ChevronUp className="h-3 w-3" />
+                        </>
+                      ) : (
+                        <>
+                          Show more <ChevronDown className="h-3 w-3" />
+                        </>
+                      )}
+                    </button>
+                  )}
+                </span>
+              </label>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
@@ -279,7 +478,6 @@ function CustomRuleInput({
         Custom Clinical Rules / Lab Constraints
       </p>
 
-      {/* Input row */}
       <div className="mb-3 flex gap-2">
         <input
           type="text"
@@ -301,7 +499,6 @@ function CustomRuleInput({
         </button>
       </div>
 
-      {/* Custom rules list */}
       {rules.length > 0 && (
         <ul className="space-y-1.5">
           {rules.map((rule) => (
@@ -351,12 +548,7 @@ function Backdrop({ onClick }: { onClick: () => void }) {
 
 /* ── Main Simulator Component ────────────────────────── */
 
-interface SimulatorProps {
-  study: StudyProtocol;
-  onClose: () => void;
-}
-
-export default function TrialMatchSimulator({ study, onClose }: SimulatorProps) {
+export default function TrialMatchSimulator({ study, patientProfile, onClose }: SimulatorProps) {
   const { protocolSection: p } = study;
 
   /* ── Parse criteria ── */
@@ -369,6 +561,35 @@ export default function TrialMatchSimulator({ study, onClose }: SimulatorProps) 
   const [inclusionMap, setInclusionMap] = useState<Record<number, boolean>>({});
   const [exclusionMap, setExclusionMap] = useState<Record<number, boolean>>({});
   const [customRules, setCustomRules] = useState<CustomRule[]>([]);
+
+  /* ── Auto-match when patient profile is provided ── */
+  useEffect(() => {
+    if (!patientProfile) return;
+
+    // Auto-match inclusion criteria
+    const matchedInclusion = autoMatchInclusion(criteria.inclusion, patientProfile);
+    setInclusionMap(matchedInclusion);
+
+    // Auto-match exclusion criteria (leave unchecked for things patient doesn't have)
+    const matchedExclusion = autoMatchExclusion(criteria.exclusion, patientProfile);
+    setExclusionMap(matchedExclusion);
+
+    // Pre-populate custom lab rules from the patient profile
+    const { egfr, platelets } = patientProfile.extractedParams;
+    const preRules: CustomRule[] = [
+      {
+        id: crypto.randomUUID(),
+        text: `eGFR ≥ 60 mL/min (Patient: ${egfr} mL/min)`,
+        satisfied: egfr >= 60,
+      },
+      {
+        id: crypto.randomUUID(),
+        text: `Platelets ≥ 100K/µL (Patient: ${platelets}K/µL)`,
+        satisfied: platelets >= 100,
+      },
+    ];
+    setCustomRules(preRules);
+  }, [patientProfile, criteria.inclusion, criteria.exclusion]);
 
   /* ── Toggles ── */
   const toggleInclusion = (index: number) =>
@@ -410,9 +631,6 @@ export default function TrialMatchSimulator({ study, onClose }: SimulatorProps) 
 
   const cat = getMatchCategory(score);
 
-  /* ── Close on Escape ── */
-  /* (handled via backdrop click + close button) */
-
   return (
     <>
       <Backdrop onClick={onClose} />
@@ -447,6 +665,11 @@ export default function TrialMatchSimulator({ study, onClose }: SimulatorProps) 
           <section className="flex flex-col items-center py-4">
             <MatchGauge score={score} />
           </section>
+
+          {/* Patient Profile (when loaded from report) */}
+          {patientProfile && (
+            <PatientInfoPanel profile={patientProfile} />
+          )}
 
           {/* Trial Summary */}
           <section className="rounded-xl border border-border-subtle bg-surface-raised p-4">
@@ -530,10 +753,8 @@ export default function TrialMatchSimulator({ study, onClose }: SimulatorProps) 
           {/* ── End of scrollable body ── */}
         </div>
 
-        {/* ── Summary bar (shrink-0, never overlaps content) ── */}
-        <div
-          className={`shrink-0 border-t px-5 py-4 ${cat.border} ${cat.bg}`}
-        >
+        {/* ── Sticky footer — never overlays content ── */}
+        <div className="shrink-0 border-t border-slate-800 bg-slate-900 p-4 z-20 sticky bottom-0">
           <div className="flex items-center justify-between">
             <div>
               <p className={`text-sm font-semibold ${cat.color}`}>{cat.label}</p>

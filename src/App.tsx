@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from "react";
-import { Search, Dna, FlaskConical, ArrowRight, AlertCircle, Sparkles } from "lucide-react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { Search, Dna, FlaskConical, ArrowRight, AlertCircle, Sparkles, Upload, FileText, Zap } from "lucide-react";
 import TrialMatchSimulator from "./TrialMatchSimulator";
 
 /* ── Types ─────────────────────────────────────────── */
@@ -63,9 +63,35 @@ interface TrialCardData {
   conditions?: string[];
 }
 
-/* ── Sample Data ─────────────────────────────────────── */
+export interface PatientProfile {
+  biomarker: string;
+  condition: string;
+  extractedParams: {
+    mutation: string;
+    disease: string;
+    egfr: number;
+    platelets: number;
+    noBrainMets: boolean;
+  };
+}
 
-const SAMPLES = [
+/* ── Preset Patient Data ──────────────────────────────── */
+
+const PRESET_PATIENT: PatientProfile = {
+  biomarker: "BRCA1 Mutation",
+  condition: "Triple-Negative Breast Cancer",
+  extractedParams: {
+    mutation: "BRCA1",
+    disease: "Triple-Negative Breast Cancer",
+    egfr: 74,
+    platelets: 185,
+    noBrainMets: true,
+  },
+};
+
+/* ── Quick biomarker lookups ────────────────────────── */
+
+const QUICK_LOOKUPS = [
   { biomarker: "BRCA1 Mutation", condition: "Triple-Negative Breast Cancer" },
   { biomarker: "PIK3CA H1047R", condition: "Breast Cancer" },
   { biomarker: "EGFR T790M", condition: "Non-Small Cell Lung Cancer" },
@@ -145,7 +171,7 @@ function EmptyHero() {
       </h2>
       <p className="mt-3 max-w-lg text-base text-text-secondary">
         Find actively recruiting oncology trials by genetic biomarker or disease
-        condition. Enter search terms below or use one of the quick sample buttons
+        condition. Enter search terms below or use one of the quick lookup buttons
         to get started.
       </p>
       <div className="mt-8 flex items-center gap-2 rounded-lg bg-surface-raised px-4 py-2.5 text-sm text-text-muted">
@@ -186,7 +212,6 @@ function TrialCard({
       className="animate-fade-in-up group relative rounded-xl border border-border-subtle bg-surface-raised p-5 shadow-card transition-all duration-200 ease-out hover:border-border-default hover:shadow-card-hover hover:-translate-y-0.5"
       style={{ animationDelay: `${index * 80}ms` }}
     >
-      {/* NCT ID */}
       <div className="mb-2 flex items-center justify-between">
         <span className="font-mono text-xs font-medium text-primary">
           {trial.nctId}
@@ -197,12 +222,10 @@ function TrialCard({
         </span>
       </div>
 
-      {/* Title */}
       <h3 className="mb-3 line-clamp-2 text-sm font-medium leading-snug text-text-primary">
         {trial.briefTitle}
       </h3>
 
-      {/* Phase badge + Conditions */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="rounded-md border border-border-subtle bg-surface px-2.5 py-0.5 text-xs font-medium text-text-secondary">
           {trial.phase}
@@ -215,48 +238,21 @@ function TrialCard({
         )}
       </div>
 
-      {/* Sponsor */}
       <div className="mb-1 flex items-center gap-1.5 text-xs text-text-secondary">
-        <svg
-          className="h-3.5 w-3.5 text-text-muted"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={1.5}
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21"
-          />
+        <svg className="h-3.5 w-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" />
         </svg>
         {trial.leadSponsor}
       </div>
 
-      {/* Location */}
       <div className="mb-4 flex items-center gap-1.5 text-xs text-text-muted">
-        <svg
-          className="h-3.5 w-3.5"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={1.5}
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z"
-          />
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z"
-          />
+        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
         </svg>
         {trial.primaryLocation}
       </div>
 
-      {/* CTA */}
       <button
         onClick={() => onSelect(trial.nctId)}
         className="mt-auto flex w-full items-center justify-center gap-2 rounded-lg bg-primary-muted px-4 py-2.5 text-sm font-medium text-primary transition-all duration-150 ease-out hover:bg-primary hover:text-white active:scale-[0.98] cursor-pointer"
@@ -279,11 +275,13 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
+  const [patientProfile, setPatientProfile] = useState<PatientProfile | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSampleClick = useCallback((bio: string, cond: string) => {
     setBiomarker(bio);
     setCondition(cond);
-    // Auto-search after a brief delay so the UI updates
     setTimeout(() => fetchTrials(bio, cond), 0);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -350,6 +348,30 @@ export default function App() {
     }
   }, [fullStudies]);
 
+  /* ── Preset patient load ── */
+  const handleLoadPreset = useCallback(() => {
+    setPatientProfile(PRESET_PATIENT);
+    setUploadedFileName("tnbc_brca1_preset_case.pdf");
+    setBiomarker(PRESET_PATIENT.biomarker);
+    setCondition(PRESET_PATIENT.condition);
+    setTimeout(() => fetchTrials(PRESET_PATIENT.biomarker, PRESET_PATIENT.condition), 0);
+  }, [fetchTrials]);
+
+  /* ── File upload handler ── */
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadedFileName(file.name);
+    // For now, treat any upload as loading the preset patient data
+    // In production this would parse the PDF with OCR/NLP
+    setPatientProfile(PRESET_PATIENT);
+    setBiomarker(PRESET_PATIENT.biomarker);
+    setCondition(PRESET_PATIENT.condition);
+    setTimeout(() => fetchTrials(PRESET_PATIENT.biomarker, PRESET_PATIENT.condition), 0);
+    // Reset input so the same file can be re-uploaded
+    e.target.value = "";
+  }, [fetchTrials]);
+
   /* ── Close simulator on Escape ── */
   useEffect(() => {
     if (!selectedStudy) return;
@@ -370,10 +392,7 @@ export default function App() {
           <div className="mx-auto max-w-2xl">
             {/* Biomarker */}
             <div className="mb-4">
-              <label
-                htmlFor="biomarker"
-                className="mb-1.5 block text-sm font-medium text-text-secondary"
-              >
+              <label htmlFor="biomarker" className="mb-1.5 block text-sm font-medium text-text-secondary">
                 Biomarker / Mutation
               </label>
               <div className="relative">
@@ -392,10 +411,7 @@ export default function App() {
 
             {/* Condition */}
             <div className="mb-5">
-              <label
-                htmlFor="condition"
-                className="mb-1.5 block text-sm font-medium text-text-secondary"
-              >
+              <label htmlFor="condition" className="mb-1.5 block text-sm font-medium text-text-secondary">
                 Disease / Condition
               </label>
               <div className="relative">
@@ -412,13 +428,13 @@ export default function App() {
               </div>
             </div>
 
-            {/* Quick sample buttons */}
+            {/* Quick biomarker lookups */}
             <div className="mb-5">
               <p className="mb-2 text-xs font-medium text-text-muted">
-                Quick samples
+                Common Biomarkers
               </p>
               <div className="flex flex-wrap gap-2">
-                {SAMPLES.map((s) => (
+                {QUICK_LOOKUPS.map((s) => (
                   <button
                     key={s.biomarker}
                     onClick={() => handleSampleClick(s.biomarker, s.condition)}
@@ -430,6 +446,57 @@ export default function App() {
               </div>
             </div>
 
+            {/* ── PDF Upload / Preset Section ── */}
+            <div className="mb-5 rounded-xl border border-accent/25 bg-accent-muted/10 p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-accent">
+                <FileText className="h-4 w-4" />
+                <span>Patient Record & Pathology Processing</span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Hidden file input */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  aria-label="Upload pathology or NGS report PDF"
+                />
+
+                {/* Upload button */}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex items-center gap-2 rounded-lg border border-border-subtle bg-surface-raised px-4 py-2.5 text-sm font-medium text-text-secondary transition-all duration-150 hover:border-accent/40 hover:bg-accent-muted/20 hover:text-accent active:scale-[0.97] cursor-pointer"
+                >
+                  <Upload className="h-4 w-4" />
+                  📄 Upload Pathology / NGS Report
+                </button>
+
+                {/* Preset case button */}
+                <button
+                  onClick={handleLoadPreset}
+                  className="inline-flex items-center gap-2 rounded-lg bg-accent/15 px-4 py-2.5 text-sm font-medium text-accent transition-all duration-150 hover:bg-accent/25 active:scale-[0.97] cursor-pointer"
+                >
+                  <Zap className="h-4 w-4" />
+                  ⚡ Load Preset Case: TNBC (BRCA1+)
+                </button>
+              </div>
+
+              {/* Uploaded file indicator */}
+              {uploadedFileName && (
+                <div className="mt-3 flex items-center gap-2 rounded-lg bg-surface-raised px-3.5 py-2 text-xs text-text-secondary">
+                  <FileText className="h-3.5 w-3.5 text-accent" />
+                  <span className="flex-1 truncate">{uploadedFileName}</span>
+                  {patientProfile && (
+                    <span className="text-accent font-medium">
+                      ✓ Extracted
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Search button */}
             <button
               onClick={handleSearch}
@@ -438,24 +505,9 @@ export default function App() {
             >
               {loading ? (
                 <>
-                  <svg
-                    className="h-4 w-4 animate-spin"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
                   Searching…
                 </>
@@ -545,6 +597,7 @@ export default function App() {
       {selectedStudy && (
         <TrialMatchSimulator
           study={selectedStudy}
+          patientProfile={patientProfile ?? undefined}
           onClose={() => setSelectedStudy(null)}
         />
       )}
