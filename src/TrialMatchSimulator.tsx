@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { X, ArrowLeft, CheckCircle, AlertTriangle, Plus, Trash2, Gauge, ChevronDown, ChevronUp, Dna, Stethoscope, Beaker, Brain, FlaskConical, Copy, Check, FileText } from "lucide-react";
+import { jsPDF } from "jspdf";
 
 /* ── Types ─────────────────────────────────────────── */
 
@@ -618,13 +619,294 @@ function ReferralSummaryModal({
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(referralText);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
     } catch {
-      // Fallback for environments where clipboard API is unavailable
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
+      // Fallback: create a hidden textarea, copy via execCommand
+      const textarea = document.createElement("textarea");
+      textarea.value = referralText;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        // Final fallback — nothing more we can do
+      }
+      document.body.removeChild(textarea);
     }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDownloadPdf = () => {
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+
+    const nctId = protocol.identificationModule.nctId;
+    const briefTitle = protocol.identificationModule.briefTitle;
+    const phases = protocol.designModule?.phases?.length
+      ? protocol.designModule.phases.map((ph) => ph.replace("PHASE", "Phase ")).join("/")
+      : "N/A";
+    const sponsor = protocol.sponsorCollaboratorsModule?.leadSponsor?.name || "Unknown";
+    const status = protocol.statusModule.overallStatus;
+
+    const matchPct = Math.round(score);
+    const catLabel = cat.label;
+
+    const matchBadgeBg =
+      matchPct >= 80 ? "#052e16" : matchPct >= 50 ? "#422006" : "#450a0a";
+    const matchBadgeText =
+      matchPct >= 80 ? "#22c55e" : matchPct >= 50 ? "#eab308" : "#ef4444";
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    const timeStr = now.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background: #0b1329;
+    color: #e2e8f0;
+    padding: 24px;
+    line-height: 1.5;
+  }
+  /* ── Brand Header ── */
+  .brand-header {
+    background: linear-gradient(135deg, #0f172a, #0b1329);
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    text-align: center;
+  }
+  .brand-header h1 {
+    font-size: 16px;
+    font-weight: 700;
+    color: #38bdf8;
+    letter-spacing: 0.3px;
+  }
+  .brand-header p {
+    font-size: 11px;
+    color: #64748b;
+    margin-top: 4px;
+  }
+  /* ── Card ── */
+  .card {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #38bdf8;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #1e293b;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  /* ── Grid (2-col) ── */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 20px;
+  }
+  .grid-2 .full { grid-column: 1 / -1; }
+  .field-label {
+    font-size: 11px;
+    color: #64748b;
+    margin-bottom: 2px;
+  }
+  .field-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e2e8f0;
+  }
+  .field-value.mono {
+    font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+    color: #38bdf8;
+  }
+  /* ── Badge ── */
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+  }
+  .badge-green  { background: #052e16; color: #22c55e; }
+  .badge-amber  { background: #422006; color: #eab308; }
+  .badge-red    { background: #450a0a; color: #ef4444; }
+  .badge-cyan   { background: #0c4a6e; color: #38bdf8; }
+  /* ── Stat Row ── */
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #0b1329;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+  }
+  .stat-row:last-child { margin-bottom: 0; }
+  .stat-label { font-size: 12px; color: #94a3b8; }
+  .stat-value { font-size: 13px; font-weight: 700; color: #e2e8f0; }
+  /* ── Callout (outreach draft) ── */
+  .callout {
+    background: #0b1329;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: #cbd5e1;
+    white-space: pre-wrap;
+  }
+  /* ── Footer ── */
+  .footer-note {
+    text-align: center;
+    font-size: 10px;
+    color: #475569;
+    margin-top: 8px;
+    padding-top: 14px;
+    border-top: 1px solid #1e293b;
+  }
+  .footer-note strong { color: #64748b; }
+</style></head>
+<body style="background:#0b1329!important;color:#e2e8f0!important;">
+
+  <!-- Brand Header -->
+  <div class="brand-header">
+    <h1>Aethel Bio — AI-Powered Biomarker Clinical Trial Matching Workspace</h1>
+    <p>Clinical Referral Summary &bull; ${dateStr}</p>
+  </div>
+
+  <!-- Patient Profile Summary -->
+  <div class="card">
+    <div class="card-title">&#x1F9EC; Patient Profile Summary</div>
+    <div class="grid-2">
+      <div>
+        <div class="field-label">Mutation</div>
+        <div class="field-value">${params.mutation}</div>
+      </div>
+      <div>
+        <div class="field-label">Disease</div>
+        <div class="field-value">${params.disease}</div>
+      </div>
+      <div>
+        <div class="field-label">eGFR</div>
+        <div class="field-value">${params.egfr} mL/min</div>
+      </div>
+      <div>
+        <div class="field-label">Platelets</div>
+        <div class="field-value">${params.platelets}K/µL</div>
+      </div>
+      <div class="full">
+        <div class="field-label">Brain Metastases</div>
+        <div class="field-value">
+          <span class="badge badge-green">&#x2713; None detected</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Target Trial -->
+  <div class="card">
+    <div class="card-title">&#x1F9EA; Target Trial</div>
+    <div class="grid-2">
+      <div class="full">
+        <div class="field-label">Title</div>
+        <div class="field-value">${briefTitle}</div>
+      </div>
+      <div>
+        <div class="field-label">NCT ID</div>
+        <div class="field-value mono">${nctId}</div>
+      </div>
+      <div>
+        <div class="field-label">Phase</div>
+        <div class="field-value">${phases}</div>
+      </div>
+      <div>
+        <div class="field-label">Sponsor</div>
+        <div class="field-value">${sponsor}</div>
+      </div>
+      <div>
+        <div class="field-label">Status</div>
+        <div><span class="badge badge-green">${status}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Eligibility Rationale -->
+  <div class="card">
+    <div class="card-title">&#x1F4CA; Eligibility Rationale &amp; Match Score</div>
+    <div style="margin-bottom:12px;">
+      <span class="badge" style="background:${matchBadgeBg};color:${matchBadgeText};font-size:13px;padding:4px 14px;">${matchPct}% — ${catLabel}</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Inclusion criteria satisfied</span>
+      <span class="stat-value">${checkedInclusionCount} / ${criteria.inclusion.length}</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Exclusion criteria cleared</span>
+      <span class="stat-value">${uncheckedExclusionCount} / ${criteria.exclusion.length}</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Custom lab rules satisfied</span>
+      <span class="stat-value">${satisfiedCustomCount} / ${customRules.length}</span>
+    </div>
+  </div>
+
+  <!-- Principal Investigator Outreach Draft -->
+  <div class="card">
+    <div class="card-title">&#x1F4C4; Principal Investigator Outreach Draft</div>
+    <div class="callout">Dear Principal Investigator,
+
+I am writing to refer a patient for consideration in the ${briefTitle} (${nctId}).
+
+The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${params.egfr} mL/min, platelets ${params.platelets}K/µL — fall within the study's anticipated parameters.
+
+Eligibility assessment yielded a ${matchPct}% match (${catLabel}), with ${checkedInclusionCount} of ${criteria.inclusion.length} inclusion criteria met and ${uncheckedExclusionCount} of ${criteria.exclusion.length} exclusion criteria cleared.
+
+Please find the full patient profile and eligibility checklist attached. I welcome the opportunity to discuss this case further and provide any additional documentation required.
+
+Respectfully,
+Aethel Bio — AI Clinical Trial Matching</div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer-note">
+    Generated by <strong>Aethel Bio</strong> — AI Clinical Trial Matching &bull; ${dateStr} at ${timeStr}
+  </div>
+
+</body>
+</html>`;
+
+    doc.html(html, {
+      callback: (pdf) => {
+        pdf.save(`Clinical_Referral_Summary_${nctId}.pdf`);
+      },
+      margin: [8, 8, 8, 8],
+      autoPaging: "text",
+      width: 190,
+      windowWidth: 820,
+    });
   };
 
   return (
@@ -793,22 +1075,36 @@ Aethel Bio — AI Clinical Trial Matching`}
             >
               Close
             </button>
-            <button
-              onClick={handleCopy}
-              className="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2 text-sm font-semibold text-white shadow-glow transition-all duration-150 hover:bg-accent/80 active:scale-[0.97] cursor-pointer"
-            >
-              {copied ? (
-                <>
-                  <Check className="h-4 w-4" />
-                  Copied!
-                </>
-              ) : (
-                <>
-                  <Copy className="h-4 w-4" />
-                  Copy to Clipboard
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleDownloadPdf}
+                className="inline-flex items-center gap-2 rounded-lg border border-accent/30 bg-accent-muted/15 px-4 py-2 text-sm font-medium text-accent transition-all duration-150 hover:bg-accent-muted/30 active:scale-[0.97] cursor-pointer"
+              >
+                <FileText className="h-4 w-4" />
+                <span className="hidden sm:inline">Download PDF Summary</span>
+                <span className="sm:hidden">PDF</span>
+              </button>
+              <button
+                onClick={handleCopy}
+                className={`inline-flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-semibold shadow-glow transition-all duration-150 active:scale-[0.97] cursor-pointer ${
+                  copied
+                    ? "bg-success text-white hover:bg-success/80"
+                    : "bg-accent text-white hover:bg-accent/80"
+                }`}
+              >
+                {copied ? (
+                  <>
+                    <Check className="h-4 w-4" />
+                    ✓ Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4" />
+                    Copy to Clipboard
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
