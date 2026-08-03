@@ -639,8 +639,9 @@ function ReferralSummaryModal({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleDownloadPdf = () => {
-    const doc = new jsPDF({ unit: "mm", format: "a4" });
+  /* ── PDF Export via html2pdf (HTML → canvas → PDF) ── */
+  const handleDownloadPdf = async () => {
+    const { default: html2pdf } = await import("html2pdf.js");
 
     const nctId = protocol.identificationModule.nctId;
     const briefTitle = protocol.identificationModule.briefTitle;
@@ -664,227 +665,140 @@ function ReferralSummaryModal({
       minute: "2-digit",
     });
 
-    /* ── Colour helpers (hex → RGB tuple) ── */
-    const hex = (h: string): [number, number, number] => [
-      parseInt(h.slice(1, 3), 16),
-      parseInt(h.slice(3, 5), 16),
-      parseInt(h.slice(5, 7), 16),
-    ];
-    const PAGE_BG = hex("#0b1329");
-    const CARD_BG = hex("#0f172a");
-    const CARD_BORDER = hex("#1e293b");
-    const ACCENT = hex("#38bdf8");
-    const TEXT_PRIMARY = hex("#f8fafc");
-    const TEXT_SUBTEXT = hex("#94a3b8");
-    const TEXT_MUTED = hex("#475569");
-    const STAT_ROW_BG = hex("#0b1329");
+    // Determine match badge color
+    const matchBadgeBg =
+      matchPct >= 80 ? "#052e16" : matchPct >= 50 ? "#422006" : "#450a0a";
+    const matchBadgeFg =
+      matchPct >= 80 ? "#22c55e" : matchPct >= 50 ? "#eab308" : "#ef4444";
 
-    const matchBg =
-      matchPct >= 80 ? hex("#052e16") : matchPct >= 50 ? hex("#422006") : hex("#450a0a");
-    const matchFg =
-      matchPct >= 80 ? hex("#22c55e") : matchPct >= 50 ? hex("#eab308") : hex("#ef4444");
-    const brainMetColor = hex("#22c55e");
+    /* ── Build hidden export container ── */
+    const container = document.createElement("div");
+    container.id = "pdf-export-container";
+    container.style.cssText =
+      "position:fixed;top:0;left:-9999px;width:210mm;min-height:297mm;background:#0b1329;font-family:Inter,Helvetica,Arial,sans-serif;color:#f8fafc;padding:0;z-index:99999;";
 
-    /* ── Layout constants ── */
-    const MG = 15;
-    const CW = 210 - MG * 2;
-    const CX = 210 / 2;
-    let y = MG;
+    container.innerHTML = `
+      <div style="max-width:180mm;margin:15mm auto;padding:0;">
 
-    /* ── Helpers ── */
-    const drawCard = (x: number, y: number, w: number, h: number) => {
-      doc.setFillColor(...CARD_BG);
-      doc.setDrawColor(...CARD_BORDER);
-      doc.rect(x, y, w, h, "FD");
-    };
-    const cardTitle = (label: string, x: number, y: number, w: number) => {
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(11);
-      doc.setTextColor(...ACCENT);
-      doc.text(label, x + 4, y + 5);
-      doc.setDrawColor(...CARD_BORDER);
-      doc.line(x + 4, y + 8, x + w - 4, y + 8);
-    };
-    const fieldRow = (
-      label: string,
-      value: string,
-      x: number,
-      y: number,
-      color?: [number, number, number],
-    ) => {
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8);
-      doc.setTextColor(...TEXT_SUBTEXT);
-      doc.text(label, x, y);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(...(color ?? TEXT_PRIMARY));
-      doc.text(value, x, y + 4);
-    };
+        <!-- ═══ 1. BRAND HEADER ═══ -->
+        <div class="card" style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:0;margin-bottom:20px;">
+          <div style="padding:12px 16px;text-align:center;">
+            <h1 style="font-family:'Space Grotesk',Helvetica,Arial,sans-serif;font-size:18px;font-weight:700;color:#38bdf8;margin:0 0 2px;">Aethel Bio — Clinical Referral Summary</h1>
+            <p style="font-size:11px;color:#94a3b8;margin:0;">${dateStr}</p>
+          </div>
+        </div>
 
-    /* ── Fill page background ── */
-    doc.setFillColor(...PAGE_BG);
-    doc.rect(0, 0, 210, 297, "F");
+        <!-- ═══ 2. MATCH SCORE BANNER ═══ -->
+        <div class="card" style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:12px 16px;text-align:center;margin-bottom:20px;">
+          <span style="display:inline-block;background:${matchBadgeBg};color:${matchBadgeFg};font-weight:700;font-size:15px;padding:6px 18px;border-radius:6px;">${matchPct}% — ${catLabel}</span>
+        </div>
 
-    /* ══════════════════════════════════════
-       1. BRAND HEADER
-       ══════════════════════════════════════ */
-    const headerH = 14;
-    drawCard(MG, y, CW, headerH);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.setTextColor(...ACCENT);
-    doc.text("Aethel Bio — Clinical Referral Summary", CX, y + 6, { align: "center" });
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(...TEXT_SUBTEXT);
-    doc.text(dateStr, CX, y + 10.5, { align: "center" });
-    y += headerH + 8;
+        <!-- ═══ 3. PATIENT PROFILE ═══ -->
+        <div class="card" style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:0;margin-bottom:20px;">
+          <div style="border-bottom:1px solid #1e293b;padding:10px 16px 8px;">
+            <span style="font-weight:700;font-size:13px;color:#38bdf8;">PATIENT PROFILE SUMMARY</span>
+          </div>
+          <div style="padding:12px 16px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <div><span style="font-size:9px;color:#94a3b8;">Mutation</span><p style="font-size:12px;font-weight:600;color:#f8fafc;margin:2px 0 0;">${params.mutation}</p></div>
+              <div><span style="font-size:9px;color:#94a3b8;">Disease</span><p style="font-size:12px;font-weight:600;color:#f8fafc;margin:2px 0 0;">${params.disease}</p></div>
+              <div><span style="font-size:9px;color:#94a3b8;">eGFR</span><p style="font-size:12px;font-weight:600;color:#f8fafc;margin:2px 0 0;">${params.egfr} mL/min</p></div>
+              <div><span style="font-size:9px;color:#94a3b8;">Platelets</span><p style="font-size:12px;font-weight:600;color:#f8fafc;margin:2px 0 0;">${params.platelets}K/µL</p></div>
+              <div style="grid-column:1/-1;"><span style="font-size:9px;color:#94a3b8;">Brain Metastases</span><p style="font-size:12px;font-weight:600;color:#22c55e;margin:2px 0 0;">✓ None detected</p></div>
+            </div>
+          </div>
+        </div>
 
-    /* ══════════════════════════════════════
-       2. MATCH SCORE BANNER
-       ══════════════════════════════════════ */
-    const scoreBannerH = 14;
-    drawCard(MG, y, CW, scoreBannerH);
-    const badgeText = `${matchPct}% — ${catLabel}`;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(...matchFg);
-    doc.text(badgeText, CX, y + 9, { align: "center" });
-    y += scoreBannerH + 8;
+        <!-- ═══ 4. TARGET TRIAL ═══ -->
+        <div class="card" style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:0;margin-bottom:20px;">
+          <div style="border-bottom:1px solid #1e293b;padding:10px 16px 8px;">
+            <span style="font-weight:700;font-size:13px;color:#38bdf8;">TARGET TRIAL</span>
+          </div>
+          <div style="padding:12px 16px;">
+            <div style="margin-bottom:8px;">
+              <span style="font-size:9px;color:#94a3b8;">Title</span>
+              <p style="font-size:12px;font-weight:600;color:#f8fafc;margin:2px 0 0;line-height:1.4;">${protocol.identificationModule.briefTitle}</p>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <div><span style="font-size:9px;color:#94a3b8;">NCT ID</span><p style="font-size:12px;font-weight:600;color:#38bdf8;margin:2px 0 0;font-family:monospace;">${nctId}</p></div>
+              <div><span style="font-size:9px;color:#94a3b8;">Phase</span><p style="font-size:12px;font-weight:600;color:#f8fafc;margin:2px 0 0;">${phases}</p></div>
+              <div><span style="font-size:9px;color:#94a3b8;">Sponsor</span><p style="font-size:12px;font-weight:600;color:#f8fafc;margin:2px 0 0;">${sponsor}</p></div>
+              <div><span style="font-size:9px;color:#94a3b8;">Status</span><p style="font-size:12px;font-weight:600;color:#22c55e;margin:2px 0 0;">${status}</p></div>
+            </div>
+          </div>
+        </div>
 
-    /* ══════════════════════════════════════
-       3. PATIENT PROFILE
-       ══════════════════════════════════════ */
-    const profileH = 32;
-    drawCard(MG, y, CW, profileH);
-    cardTitle("PATIENT PROFILE SUMMARY", MG, y, CW);
+        <!-- ═══ 5. ELIGIBILITY RATIONALE ═══ -->
+        <div class="card" style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:0;margin-bottom:20px;">
+          <div style="border-bottom:1px solid #1e293b;padding:10px 16px 8px;">
+            <span style="font-weight:700;font-size:13px;color:#38bdf8;">ELIGIBILITY RATIONALE &amp; MATCH SCORE</span>
+          </div>
+          <div style="padding:12px 16px;">
+            <div style="text-align:center;margin-bottom:10px;">
+              <span style="display:inline-block;background:${matchBadgeBg};color:${matchBadgeFg};font-weight:700;font-size:12px;padding:3px 14px;border-radius:4px;">${matchPct}% — ${catLabel}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e293b;">
+              <span style="font-size:11px;color:#94a3b8;">Inclusion criteria satisfied</span>
+              <span style="font-size:11px;font-weight:600;color:#f8fafc;">${checkedInclusionCount} / ${criteria.inclusion.length}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e293b;">
+              <span style="font-size:11px;color:#94a3b8;">Exclusion criteria cleared</span>
+              <span style="font-size:11px;font-weight:600;color:#f8fafc;">${uncheckedExclusionCount} / ${criteria.exclusion.length}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:6px 0;">
+              <span style="font-size:11px;color:#94a3b8;">Custom lab rules satisfied</span>
+              <span style="font-size:11px;font-weight:600;color:#f8fafc;">${satisfiedCustomCount} / ${customRules.length}</span>
+            </div>
+          </div>
+        </div>
 
-    const gX = MG + 5;
-    const gY = y + 12;
-    const col2X = gX + (CW - 20) / 2 + 10;
+        <!-- ═══ 6. OUTREACH DRAFT ═══ -->
+        <div class="card" style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:0;margin-bottom:20px;">
+          <div style="border-bottom:1px solid #1e293b;padding:10px 16px 8px;">
+            <span style="font-weight:700;font-size:13px;color:#38bdf8;">PRINCIPAL INVESTIGATOR OUTREACH DRAFT</span>
+          </div>
+          <div style="padding:12px 16px;">
+            <p style="font-size:12px;color:#f8fafc;line-height:1.6;margin:0;white-space:pre-wrap;">Dear Principal Investigator,
 
-    fieldRow("Mutation", params.mutation, gX, gY);
-    fieldRow("Disease", params.disease, col2X, gY);
-    fieldRow("eGFR", `${params.egfr} mL/min`, gX, gY + 11);
-    fieldRow("Platelets", `${params.platelets}K/µL`, col2X, gY + 11);
+I am writing to refer a patient for consideration in the ${protocol.identificationModule.briefTitle} (${nctId}).
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(...TEXT_SUBTEXT);
-    doc.text("Brain Metastases", gX, gY + 22);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(...brainMetColor);
-    doc.text("✓ None detected", gX, gY + 26);
-    y += profileH + 8;
+The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${params.egfr} mL/min, platelets ${params.platelets}K/µL — fall within the study's anticipated parameters.
 
-    /* ══════════════════════════════════════
-       4. TARGET TRIAL
-       ══════════════════════════════════════ */
-    const titleLines = doc.splitTextToSize(briefTitle, CW - 8);
-    const trialH = Math.max(28, 14 + titleLines.length * 4 + 14 + 8);
-    drawCard(MG, y, CW, trialH);
-    cardTitle("TARGET TRIAL", MG, y, CW);
+Eligibility assessment yielded a ${matchPct}% match (${catLabel}), with ${checkedInclusionCount} of ${criteria.inclusion.length} inclusion criteria met and ${uncheckedExclusionCount} of ${criteria.exclusion.length} exclusion criteria cleared.
 
-    let tY = y + 12;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(...TEXT_SUBTEXT);
-    doc.text("Title", gX, tY);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(...TEXT_PRIMARY);
-    doc.text(titleLines, gX, tY + 4);
-    tY += titleLines.length * 4 + 6;
+Please find the full patient profile and eligibility checklist attached. I welcome the opportunity to discuss this case further and provide any additional documentation required.
 
-    fieldRow("NCT ID", nctId, gX, tY, ACCENT);
-    fieldRow("Phase", phases, col2X, tY);
-    tY += 11;
+Respectfully,
+Aethel Bio — AI Clinical Trial Matching</p>
+          </div>
+        </div>
 
-    fieldRow("Sponsor", sponsor, gX, tY);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(...TEXT_SUBTEXT);
-    doc.text("Status", col2X, tY);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(...brainMetColor);
-    doc.text(status, col2X, tY + 4);
-    y += trialH + 8;
+        <!-- ═══ 7. FOOTER ═══ -->
+        <div style="border-top:1px solid #1e293b;padding-top:8px;text-align:center;">
+          <p style="font-size:9px;color:#475569;margin:0;">Generated by Aethel Bio — AI Clinical Trial Matching  •  ${dateStr} at ${timeStr}</p>
+        </div>
 
-    /* ══════════════════════════════════════
-       5. ELIGIBILITY RATIONALE
-       ══════════════════════════════════════ */
-    const eligH = 22;
-    drawCard(MG, y, CW, eligH);
-    cardTitle("ELIGIBILITY RATIONALE & MATCH SCORE", MG, y, CW);
+      </div>
+    `;
 
-    const sY = y + 12;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.setTextColor(...matchFg);
-    doc.text(`${matchPct}% — ${catLabel}`, CX, sY, { align: "center" });
+    // Append, render, save, clean up
+    document.body.appendChild(container);
 
-    const statRowFn = (label: string, value: string, sy: number) => {
-      doc.setFillColor(...STAT_ROW_BG);
-      doc.rect(gX, sy, CW - 10, 4, "F");
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8);
-      doc.setTextColor(...TEXT_SUBTEXT);
-      doc.text(label, gX + 2, sy + 3);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(9);
-      doc.setTextColor(...TEXT_PRIMARY);
-      doc.text(value, gX + CW - 10 - 2, sy + 3, { align: "right" });
-    };
-    statRowFn("Inclusion criteria satisfied", `${checkedInclusionCount} / ${criteria.inclusion.length}`, sY + 5);
-    statRowFn("Exclusion criteria cleared", `${uncheckedExclusionCount} / ${criteria.exclusion.length}`, sY + 10);
-    statRowFn("Custom lab rules satisfied", `${satisfiedCustomCount} / ${customRules.length}`, sY + 15);
-    y += eligH + 8;
-
-    /* ══════════════════════════════════════
-       6. OUTREACH DRAFT
-       ══════════════════════════════════════ */
-    const outreachBody = [
-      "Dear Principal Investigator,",
-      "",
-      `I am writing to refer a patient for consideration in the ${briefTitle} (${nctId}).`,
-      "",
-      `The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${params.egfr} mL/min, platelets ${params.platelets}K/µL — fall within the study's anticipated parameters.`,
-      "",
-      `Eligibility assessment yielded a ${matchPct}% match (${catLabel}), with ${checkedInclusionCount} of ${criteria.inclusion.length} inclusion criteria met and ${uncheckedExclusionCount} of ${criteria.exclusion.length} exclusion criteria cleared.`,
-      "",
-      "Please find the full patient profile and eligibility checklist attached. I welcome the opportunity to discuss this case further and provide any additional documentation required.",
-      "",
-      "Respectfully,",
-      "Aethel Bio — AI Clinical Trial Matching",
-    ].join("\n");
-
-    const wrappedLines = doc.splitTextToSize(outreachBody, CW - 8);
-    const lineH = 4.2;
-    const outreachH = 14 + wrappedLines.length * lineH + 6;
-    drawCard(MG, y, CW, outreachH);
-    cardTitle("PRINCIPAL INVESTIGATOR OUTREACH DRAFT", MG, y, CW);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(...TEXT_PRIMARY);
-    doc.text(wrappedLines, gX, y + 12);
-    y += outreachH + 8;
-
-    /* ══════════════════════════════════════
-       7. FOOTER
-       ══════════════════════════════════════ */
-    doc.setDrawColor(...CARD_BORDER);
-    doc.line(MG, y, MG + CW, y);
-    y += 4;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(...TEXT_MUTED);
-    doc.text(`Generated by Aethel Bio — AI Clinical Trial Matching  •  ${dateStr} at ${timeStr}`, CX, y, { align: "center" });
-
-    doc.save(`Clinical_Referral_Summary_${nctId}.pdf`);
+    try {
+      await html2pdf()
+        .set({
+          margin: 0,
+          filename: `Clinical_Referral_Summary_${nctId}.pdf`,
+          image: { type: "jpeg", quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+          pagebreak: { mode: ["css", "legacy"], avoid: ".card" },
+        })
+        .from(container)
+        .save();
+    } finally {
+      container.remove();
+    }
   };
 
   return (
