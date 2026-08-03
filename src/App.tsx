@@ -1,6 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Search, Dna, FlaskConical, ArrowRight, AlertCircle, Sparkles, Upload, FileText, RotateCcw } from "lucide-react";
+import { Search, Dna, FlaskConical, ArrowRight, AlertCircle, Sparkles, Upload, FileText, RotateCcw, Loader2 } from "lucide-react";
 import TrialMatchSimulator from "./TrialMatchSimulator";
+import { extractFileText } from "./extractReport";
+
+// Supabase project URL — Edge Function endpoint
+const SUPABASE_URL = "https://cioaszuvlpzbraavdlri.supabase.co";
 
 /* ── Types ─────────────────────────────────────────── */
 
@@ -63,31 +67,32 @@ interface TrialCardData {
   conditions?: string[];
 }
 
+export interface ExtractedParams {
+  mutation: string;
+  disease: string;
+  egfr: number | null;
+  platelets: number | null;
+  noBrainMets: boolean;
+  age: number | null;
+  sex: string | null;
+  wbc: number | null;
+  hemoglobin: number | null;
+  creatinine: number | null;
+  alt: number | null;
+  ast: number | null;
+  additionalMutations: string[];
+  reportSummary: string;
+}
+
 export interface PatientProfile {
   biomarker: string;
   condition: string;
-  extractedParams: {
-    mutation: string;
-    disease: string;
-    egfr: number;
-    platelets: number;
-    noBrainMets: boolean;
-  };
+  extractedParams: ExtractedParams;
 }
 
 /* ── Preset Patient Data ──────────────────────────────── */
-
-const PRESET_PATIENT: PatientProfile = {
-  biomarker: "BRCA1 Mutation",
-  condition: "Triple-Negative Breast Cancer",
-  extractedParams: {
-    mutation: "BRCA1",
-    disease: "Triple-Negative Breast Cancer",
-    egfr: 74,
-    platelets: 185,
-    noBrainMets: true,
-  },
-};
+// NOTE: PRESET_PATIENT was previously defined here as a legacy demo value.
+// It is no longer used — the AI extraction pipeline populates patient data.
 
 /* ── Quick biomarker lookups ────────────────────────── */
 
@@ -277,6 +282,7 @@ export default function App() {
   const [searched, setSearched] = useState(false);
   const [patientProfile, setPatientProfile] = useState<PatientProfile | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [extracting, setExtracting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSampleClick = useCallback((bio: string, cond: string) => {
@@ -349,18 +355,61 @@ export default function App() {
   }, [fullStudies]);
 
   /* ── File upload handler ── */
-  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setUploadedFileName(file.name);
-    // For now, treat any upload as loading the preset patient data
-    // In production this would parse the PDF with OCR/NLP
-    setPatientProfile(PRESET_PATIENT);
-    setBiomarker(PRESET_PATIENT.biomarker);
-    setCondition(PRESET_PATIENT.condition);
-    setTimeout(() => fetchTrials(PRESET_PATIENT.biomarker, PRESET_PATIENT.condition), 0);
+
     // Reset input so the same file can be re-uploaded
     e.target.value = "";
+
+    // File size check — reject files > 10MB
+    if (file.size > 10 * 1024 * 1024) {
+      setError("File too large. Maximum size is 10MB.");
+      return;
+    }
+
+    setUploadedFileName(file.name);
+    setError(null);
+    setExtracting(true);
+
+    try {
+      // Extract text from the uploaded file
+      const extractedText = await extractFileText(file);
+
+      // Check extracted text length
+      if (extractedText.trim().length < 20) {
+        setError("Could not extract readable text from this file. Try a different format.");
+        setExtracting(false);
+        return;
+      }
+
+      // Send text to the Edge Function
+      const response = await fetch(`${SUPABASE_URL}/functions/v1/extract-patient`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: extractedText }),
+      });
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || "AI analysis failed");
+      }
+
+      const { data } = result;
+
+      // Set the patient profile with AI-extracted data
+      setPatientProfile(data);
+      setBiomarker(data.biomarker ?? "");
+      setCondition(data.condition ?? "");
+
+      // Auto-search trials with the extracted biomarker and condition
+      setTimeout(() => fetchTrials(data.biomarker ?? "", data.condition ?? ""), 0);
+    } catch (err) {
+      setError("AI analysis failed. Please try again or enter data manually.");
+    } finally {
+      setExtracting(false);
+    }
   }, [fetchTrials]);
 
   /* ── Reset workspace ── */
@@ -471,10 +520,15 @@ export default function App() {
                 {/* Upload button — single primary upload action */}
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="inline-flex items-center gap-2 rounded-lg border border-border-subtle bg-surface-raised px-4 py-2.5 text-sm font-medium text-text-secondary transition-all duration-150 hover:border-accent/40 hover:bg-accent-muted/20 hover:text-accent active:scale-[0.97] cursor-pointer"
+                  disabled={extracting}
+                  className="inline-flex items-center gap-2 rounded-lg border border-border-subtle bg-surface-raised px-4 py-2.5 text-sm font-medium text-text-secondary transition-all duration-150 hover:border-accent/40 hover:bg-accent-muted/20 hover:text-accent active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                 >
-                  <Upload className="h-4 w-4" />
-                  📄 Upload Pathology / NGS Report (.pdf, .txt, .docx)
+                  {extracting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Upload className="h-4 w-4" />
+                  )}
+                  {extracting ? "Analyzing report…" : "Upload Pathology / NGS Report (.pdf, .txt, .docx)"}
                 </button>
               </div>
 
@@ -483,11 +537,16 @@ export default function App() {
                 <div className="mt-3 flex items-center gap-2 rounded-lg bg-surface-raised px-3.5 py-2 text-xs text-text-secondary">
                   <FileText className="h-3.5 w-3.5 text-accent" />
                   <span className="flex-1 truncate">{uploadedFileName}</span>
-                  {patientProfile && (
+                  {extracting ? (
+                    <span className="flex items-center gap-1.5 text-text-muted">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Analyzing…
+                    </span>
+                  ) : patientProfile ? (
                     <span className="text-accent font-medium">
                       ✓ Extracted
                     </span>
-                  )}
+                  ) : null}
                 </div>
               )}
 

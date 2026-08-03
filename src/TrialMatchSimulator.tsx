@@ -45,16 +45,27 @@ interface CustomRule {
   satisfied: boolean;
 }
 
+interface ExtractedParams {
+  mutation: string;
+  disease: string;
+  egfr: number | null;
+  platelets: number | null;
+  noBrainMets: boolean;
+  age: number | null;
+  sex: string | null;
+  wbc: number | null;
+  hemoglobin: number | null;
+  creatinine: number | null;
+  alt: number | null;
+  ast: number | null;
+  additionalMutations: string[];
+  reportSummary: string;
+}
+
 interface PatientProfile {
   biomarker: string;
   condition: string;
-  extractedParams: {
-    mutation: string;
-    disease: string;
-    egfr: number;
-    platelets: number;
-    noBrainMets: boolean;
-  };
+  extractedParams: ExtractedParams;
 }
 
 interface SimulatorProps {
@@ -197,10 +208,10 @@ function autoMatchInclusion(
 
     // Check for lab value match (e.g. "eGFR > 60" — patient eGFR 74 qualifies)
     const hasEGFR = /egfr|gfr|creatinine|renal\s*function/.test(lower);
-    const egfrMatch = hasEGFR && egfr >= 60;
+    const egfrMatch = hasEGFR && egfr !== null && egfr >= 60;
 
     const hasPlatelets = /platelet|thrombocyte|hematologic/.test(lower);
-    const plateletMatch = hasPlatelets && platelets >= 100;
+    const plateletMatch = hasPlatelets && platelets !== null && platelets >= 100;
 
     // Broad match for "breast cancer" or "solid tumor" — assume patient qualifies
     const broadMatch =
@@ -233,13 +244,13 @@ function autoMatchExclusion(
     }
 
     // If item mentions eGFR < 30 or renal impairment, but patient eGFR is 74 → NOT excluded
-    if (/egfr\s*<\s*30|dialysis|renal\s*failure/.test(lower) && egfr >= 60) {
+    if (/egfr\s*<\s*30|dialysis|renal\s*failure/.test(lower) && egfr !== null && egfr >= 60) {
       map[i] = false;
       return;
     }
 
     // If item mentions platelets < 100K but patient has 185K → NOT excluded
-    if (/platelet.*<\s*100|thrombocytopenia/.test(lower) && platelets >= 100) {
+    if (/platelet.*<\s*100|thrombocytopenia/.test(lower) && platelets !== null && platelets >= 100) {
       map[i] = false;
       return;
     }
@@ -304,6 +315,8 @@ function MatchGauge({ score }: { score: number }) {
 /* ── Patient Info Panel ──────────────────────────────── */
 
 function PatientInfoPanel({ profile }: { profile: PatientProfile }) {
+  const fmt = (val: number | null, unit: string) =>
+    val !== null ? `${val} ${unit}` : "N/A";
   return (
     <section className="rounded-xl border border-accent/25 bg-accent-muted/10 p-4">
       <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-accent">
@@ -329,14 +342,14 @@ function PatientInfoPanel({ profile }: { profile: PatientProfile }) {
           <Beaker className="h-3.5 w-3.5 text-accent" />
           <div>
             <span className="text-text-muted">eGFR</span>
-            <p className="font-medium text-text-primary">{profile.extractedParams.egfr} mL/min</p>
+            <p className="font-medium text-text-primary">{fmt(profile.extractedParams.egfr, "mL/min")}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <Beaker className="h-3.5 w-3.5 text-accent" />
           <div>
             <span className="text-text-muted">Platelets</span>
-            <p className="font-medium text-text-primary">{profile.extractedParams.platelets}K/µL</p>
+            <p className="font-medium text-text-primary">{fmt(profile.extractedParams.platelets, "K/µL")}</p>
           </div>
         </div>
         <div className="col-span-2 flex items-center gap-2">
@@ -567,6 +580,8 @@ function ReferralSummaryModal({
   const printRef = useRef<HTMLDivElement>(null);
   const protocol = study.protocolSection;
   const params = patientProfile.extractedParams;
+  const fmtL = (val: number | null, unit: string) =>
+    val !== null ? `${val} ${unit}` : "N/A";
 
   const checkedInclusionCount = criteria.inclusion.filter((_, i) => inclusionMap[i]).length;
   const uncheckedExclusionCount = criteria.exclusion.filter((_, i) => !exclusionMap[i]).length;
@@ -581,8 +596,8 @@ function ReferralSummaryModal({
     "────────────────────────────────────────────",
     `Mutation: ${params.mutation}`,
     `Disease: ${params.disease}`,
-    `eGFR: ${params.egfr} mL/min`,
-    `Platelets: ${params.platelets}K/µL`,
+    `eGFR: ${fmtL(params.egfr, "mL/min")}`,
+    `Platelets: ${fmtL(params.platelets, "K/µL")}`,
     `Brain Metastases: ${params.noBrainMets ? "None detected" : "Present"}`,
     "",
     "────────────────────────────────────────────",
@@ -609,9 +624,13 @@ function ReferralSummaryModal({
     "",
     `I am writing to refer a patient for consideration in the ${protocol.identificationModule.briefTitle} (${protocol.identificationModule.nctId}).`,
     "",
-    `The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${params.egfr} mL/min, platelets ${params.platelets}K/µL — fall within the study's anticipated parameters.`,
+    `The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${fmtL(params.egfr, "mL/min")}, platelets ${fmtL(params.platelets, "K/µL")} — fall within the study's anticipated parameters.`,
     "",
-    `Eligibility assessment yielded a ${Math.round(score)}% match (${cat.label}), with ${checkedInclusionCount} of ${criteria.inclusion.length} inclusion criteria met and ${uncheckedExclusionCount} of ${criteria.exclusion.length} exclusion criteria cleared.`,
+    `Eligibility assessment yielded a ${Math.round(score)}% match (${cat.label}), with ${checkedInclusionCount} of ${
+      criteria.inclusion.length
+    } inclusion criteria met and ${uncheckedExclusionCount} of ${
+      criteria.exclusion.length
+    } exclusion criteria cleared.`,
     "",
     "Please find the full patient profile and eligibility checklist attached. I welcome the opportunity to discuss this case further and provide any additional documentation required.",
     "",
@@ -757,11 +776,11 @@ function ReferralSummaryModal({
                 </div>
                 <div>
                   <span className="text-xs text-text-muted">eGFR</span>
-                  <p className="font-medium text-text-primary">{params.egfr} mL/min</p>
+                  <p className="font-medium text-text-primary">{fmtL(params.egfr, "mL/min")}</p>
                 </div>
                 <div>
                   <span className="text-xs text-text-muted">Platelets</span>
-                  <p className="font-medium text-text-primary">{params.platelets}K/µL</p>
+                  <p className="font-medium text-text-primary">{fmtL(params.platelets, "K/µL")}</p>
                 </div>
                 <div className="col-span-2">
                   <span className="text-xs text-text-muted">Brain Metastases</span>
@@ -856,7 +875,7 @@ function ReferralSummaryModal({
 
 I am writing to refer a patient for consideration in the ${protocol.identificationModule.briefTitle} (${protocol.identificationModule.nctId}).
 
-The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${params.egfr} mL/min, platelets ${params.platelets}K/µL — fall within the study's anticipated parameters.
+The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${fmtL(params.egfr, "mL/min")}, platelets ${fmtL(params.platelets, "K/µL")} — fall within the study's anticipated parameters.
 
 Eligibility assessment yielded a ${Math.round(score)}% match (${cat.label}), with ${checkedInclusionCount} of ${criteria.inclusion.length} inclusion criteria met and ${uncheckedExclusionCount} of ${criteria.exclusion.length} exclusion criteria cleared.
 
@@ -947,7 +966,7 @@ Aethel Bio — AI Clinical Trial Matching`}
                 </div>
                 <div style={{ marginBottom: "10px" }}>
                   <div style={{ color: "#94a3b8", fontSize: "10px" }}>eGFR</div>
-                  <div style={{ color: "#f8fafc", fontSize: "13px", fontWeight: "bold" }}>{params.egfr} mL/min</div>
+                  <div style={{ color: "#f8fafc", fontSize: "13px", fontWeight: "bold" }}>{fmtL(params.egfr, "mL/min")}</div>
                 </div>
                 <div>
                   <div style={{ color: "#94a3b8", fontSize: "10px" }}>Brain Metastases</div>
@@ -961,7 +980,7 @@ Aethel Bio — AI Clinical Trial Matching`}
                 </div>
                 <div>
                   <div style={{ color: "#94a3b8", fontSize: "10px" }}>Platelets</div>
-                  <div style={{ color: "#f8fafc", fontSize: "13px", fontWeight: "bold" }}>{params.platelets}K/µL</div>
+                  <div style={{ color: "#f8fafc", fontSize: "13px", fontWeight: "bold" }}>{fmtL(params.platelets, "K/µL")}</div>
                 </div>
               </div>
             </div>
@@ -1027,7 +1046,7 @@ Aethel Bio — AI Clinical Trial Matching`}
 
 I am writing to refer a patient for consideration in the ${protocol.identificationModule.briefTitle} (${protocol.identificationModule.nctId}).
 
-The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${params.egfr} mL/min, platelets ${params.platelets}K/µL — fall within the study's anticipated parameters.
+The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${fmtL(params.egfr, "mL/min")}, platelets ${fmtL(params.platelets, "K/µL")} — fall within the study's anticipated parameters.
 
 Eligibility assessment yielded a ${matchPct}% match (${catLabel}), with ${checkedInclusionCount} of ${criteria.inclusion.length} inclusion criteria met and ${uncheckedExclusionCount} of ${criteria.exclusion.length} exclusion criteria cleared.
 
@@ -1089,16 +1108,18 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
 
     // Pre-populate custom lab rules from the patient profile
     const { egfr, platelets } = patientProfile.extractedParams;
+    const egfrVal = egfr !== null ? egfr : "N/A";
+    const pltVal = platelets !== null ? platelets : "N/A";
     const preRules: CustomRule[] = [
       {
         id: crypto.randomUUID(),
-        text: `eGFR ≥ 60 mL/min (Patient: ${egfr} mL/min)`,
-        satisfied: egfr >= 60,
+        text: `eGFR ≥ 60 mL/min (Patient: ${egfrVal} mL/min)`,
+        satisfied: egfr !== null && egfr >= 60,
       },
       {
         id: crypto.randomUUID(),
-        text: `Platelets ≥ 100K/µL (Patient: ${platelets}K/µL)`,
-        satisfied: platelets >= 100,
+        text: `Platelets ≥ 100K/µL (Patient: ${pltVal}K/µL)`,
+        satisfied: platelets !== null && platelets >= 100,
       },
     ];
     setCustomRules(preRules);
