@@ -318,6 +318,29 @@ export default function App() {
       const data: StudiesResponse = await res.json();
 
       if (!data.studies || data.studies.length === 0) {
+        // Fallback: if both biomarker & condition were used with zero results,
+        // retry with just the condition to ensure relevant trials are always shown
+        if (bio.trim() && cond.trim()) {
+          const fallbackParams = new URLSearchParams();
+          fallbackParams.set("query.cond", cond.trim());
+          fallbackParams.set("filter.overallStatus", "RECRUITING");
+          fallbackParams.set("pageSize", "9");
+          fallbackParams.set("format", "json");
+
+          const fallbackUrl = `https://clinicaltrials.gov/api/v2/studies?${fallbackParams.toString()}`;
+          const fallbackRes = await fetch(fallbackUrl);
+
+          if (fallbackRes.ok) {
+            const fallbackData: StudiesResponse = await fallbackRes.json();
+            if (fallbackData.studies && fallbackData.studies.length > 0) {
+              const mapped = fallbackData.studies.map(mapStudyToCard);
+              setFullStudies(fallbackData.studies);
+              setTrials(mapped);
+              setLoading(false);
+              return;
+            }
+          }
+        }
         setTrials([]);
         setLoading(false);
         return;
