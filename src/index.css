@@ -21,6 +21,7 @@
   --color-success: oklch(0.58 0.20 145);
   --color-success-muted: oklch(0.58 0.20 145 / 0.15);
   --color-warning: oklch(0.72 0.17 75);
+  --color-warning-muted: oklch(0.72 0.17 75 / 0.15);
   --color-destructive: oklch(0.60 0.22 28);
   --color-destructive-muted: oklch(0.60 0.22 28 / 0.15);
 
@@ -79,4 +80,46 @@ body {
   background: linear-gradient(90deg, var(--color-surface-raised) 25%, var(--color-surface-hover) 50%, var(--color-surface-raised) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slideOutRight {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes gaugeAppear {
+  from { opacity: 0; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes checkPop {
+  0% { transform: scale(0); }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s ease-out forwards;
+}
+
+.animate-gauge-appear {
+  animation: gaugeAppear 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-check-pop {
+  animation: checkPop 0.25s ease-out forwards;
 }

@@ -1,5 +1,6 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Search, Dna, FlaskConical, ArrowRight, AlertCircle, Sparkles } from "lucide-react";
+import TrialMatchSimulator from "./TrialMatchSimulator";
 
 /* ── Types ─────────────────────────────────────────── */
 
@@ -34,6 +35,14 @@ interface StudyProtocol {
     };
     conditionsModule?: {
       conditions?: string[];
+    };
+    eligibilityModule?: {
+      eligibilityCriteria?: string;
+      sex?: string;
+      minimumAge?: string;
+      maximumAge?: string;
+      healthyVolunteers?: boolean;
+      stdAges?: string[];
     };
   };
 }
@@ -265,6 +274,8 @@ export default function App() {
   const [biomarker, setBiomarker] = useState("");
   const [condition, setCondition] = useState("");
   const [trials, setTrials] = useState<TrialCardData[]>([]);
+  const [fullStudies, setFullStudies] = useState<StudyProtocol[]>([]);
+  const [selectedStudy, setSelectedStudy] = useState<StudyProtocol | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
@@ -309,6 +320,7 @@ export default function App() {
       }
 
       const mapped = data.studies.map(mapStudyToCard);
+      setFullStudies(data.studies);
       setTrials(mapped);
     } catch (err) {
       const message =
@@ -332,9 +344,21 @@ export default function App() {
   );
 
   const handleSelectTrial = useCallback((nctId: string) => {
-    console.log("Trial selected for analysis:", nctId);
-    // Future: open detail panel or analysis view
-  }, []);
+    const study = fullStudies.find((s) => s.protocolSection.identificationModule.nctId === nctId);
+    if (study) {
+      setSelectedStudy(study);
+    }
+  }, [fullStudies]);
+
+  /* ── Close simulator on Escape ── */
+  useEffect(() => {
+    if (!selectedStudy) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelectedStudy(null);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedStudy]);
 
   return (
     <div className="min-h-screen bg-aethel-glow">
@@ -516,6 +540,14 @@ export default function App() {
           )}
         </section>
       </main>
+
+      {/* ── Trial Match Simulator Drawer ── */}
+      {selectedStudy && (
+        <TrialMatchSimulator
+          study={selectedStudy}
+          onClose={() => setSelectedStudy(null)}
+        />
+      )}
     </div>
   );
 }
