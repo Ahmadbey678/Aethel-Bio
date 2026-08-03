@@ -383,67 +383,111 @@ export default function App() {
     // Sanitize raw terms into clean gene symbol and simplified disease name
     const { cleanGene, cleanDisease } = sanitizeSearchTerms(cond, bio);
 
-    // Build the query strategy stack — try each in order until one returns results
-    const queries: { params: URLSearchParams; label: string }[] = [];
+    // ── Fetch helper ──
+    async function fetchQuery(
+      params: URLSearchParams,
+    ): Promise<{ studies: StudyProtocol[]; cards: TrialCardData[] } | null> {
+      const url = `https://clinicaltrials.gov/api/v2/studies?${params.toString()}`;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const data: StudiesResponse = await res.json();
+        if (!data.studies || data.studies.length === 0) return null;
+        return { studies: data.studies, cards: data.studies.map(mapStudyToCard) };
+      } catch {
+        return null;
+      }
+    }
 
+    // ── Dedup merge ──
+    function mergeResults(
+      ...results: ({ studies: StudyProtocol[]; cards: TrialCardData[] } | null)[]
+    ): { studies: StudyProtocol[]; cards: TrialCardData[] } {
+      const seen = new Set<string>();
+      const studies: StudyProtocol[] = [];
+      const cards: TrialCardData[] = [];
+      for (const r of results) {
+        if (!r) continue;
+        for (let i = 0; i < r.studies.length; i++) {
+          const nctId = r.studies[i].protocolSection.identificationModule.nctId;
+          if (!seen.has(nctId)) {
+            seen.add(nctId);
+            studies.push(r.studies[i]);
+            cards.push(r.cards[i]);
+          }
+        }
+      }
+      return { studies, cards };
+    }
+
+    // ── Base query builder ──
     const baseParams = () => {
       const p = new URLSearchParams();
       p.set("filter.overallStatus", "RECRUITING");
-      p.set("pageSize", "9");
+      p.set("pageSize", "20");
       p.set("format", "json");
       return p;
     };
 
-    // Level 1 — Primary: query.cond + query.term (both available)
-    if (cleanDisease && cleanGene) {
-      const p = baseParams();
-      p.set("query.cond", cleanDisease);
-      p.set("query.term", cleanGene);
-      queries.push({ params: p, label: "primary" });
-    }
-
-    // Level 2 — Secondary: single combined term (both available)
-    if (cleanDisease && cleanGene) {
-      const p = baseParams();
-      p.set("query.term", `${cleanGene} ${cleanDisease}`);
-      queries.push({ params: p, label: "secondary" });
-    }
-
-    // Level 3 — Broad: condition only (if disease available)
-    if (cleanDisease) {
-      const p = baseParams();
-      p.set("query.cond", cleanDisease);
-      queries.push({ params: p, label: "broad" });
-    }
-
-    // Gene-only fallback (if only gene was entered, no disease)
-    if (cleanGene && !cleanDisease) {
-      const p = baseParams();
-      p.set("query.term", cleanGene);
-      queries.push({ params: p, label: "gene-only" });
-    }
+    // ── Multi‑tier search ──
+    // Collect results from broader tiers when few matches exist,
+    // then merge and deduplicate to maximise relevant results.
+    let allStudies: StudyProtocol[] = [];
+    let allCards: TrialCardData[] = [];
 
     try {
-      for (const q of queries) {
-        const url = `https://clinicaltrials.gov/api/v2/studies?${q.params.toString()}`;
-        // eslint-disable-next-line no-console
-        console.debug(`[Trial Search] ${q.label}:`, url);
-
-        const res = await fetch(url);
-        if (!res.ok) continue; // Network-level failure → skip to next strategy
-
-        const data: StudiesResponse = await res.json();
-        if (data.studies && data.studies.length > 0) {
-          const mapped = data.studies.map(mapStudyToCard);
-          setFullStudies(data.studies);
-          setTrials(mapped);
-          setLoading(false);
-          return; // ✓ Results found — done
+      // Tier 1 — cleanDisease + cleanGene (most specific)
+      if (cleanDisease && cleanGene) {
+        const p = baseParams();
+        p.set("query.cond", cleanDisease);
+        p.set("query.term", cleanGene);
+        const result = await fetchQuery(p);
+        if (result) {
+          allStudies = result.studies;
+          allCards = result.cards;
         }
       }
 
-      // All query strategies returned zero results
-      setTrials([]);
+      // Tier 2 — cleanDisease alone (broaden when < 5 results)
+      if (allCards.length < 5 && cleanDisease) {
+        const p = baseParams();
+        p.set("query.cond", cleanDisease);
+        const result = await fetchQuery(p);
+        const merged = mergeResults(
+          { studies: allStudies, cards: allCards },
+          result,
+        );
+        allStudies = merged.studies;
+        allCards = merged.cards;
+      }
+
+      // Tier 3 — cleanGene alone (broaden when still < 5 results)
+      if (allCards.length < 5 && cleanGene) {
+        const p = baseParams();
+        p.set("query.term", cleanGene);
+        const result = await fetchQuery(p);
+        const merged = mergeResults(
+          { studies: allStudies, cards: allCards },
+          result,
+        );
+        allStudies = merged.studies;
+        allCards = merged.cards;
+      }
+
+      // Gene-only fallback (when only a gene was entered, no disease)
+      if (allCards.length === 0 && cleanGene && !cleanDisease) {
+        const p = baseParams();
+        p.set("query.term", cleanGene);
+        const result = await fetchQuery(p);
+        if (result) {
+          allStudies = result.studies;
+          allCards = result.cards;
+        }
+      }
+
+      // Return top 10 most relevant
+      setFullStudies(allStudies.slice(0, 10));
+      setTrials(allCards.slice(0, 10));
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to fetch trials.";
