@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Search, Dna, FlaskConical, ArrowRight, AlertCircle, Sparkles, Upload, FileText, Zap } from "lucide-react";
+import { Search, Dna, FlaskConical, ArrowRight, AlertCircle, Sparkles, Upload, FileText, Zap, Check, X } from "lucide-react";
 import TrialMatchSimulator from "./TrialMatchSimulator";
 
 /* ── Types ─────────────────────────────────────────── */
@@ -351,7 +351,6 @@ export default function App() {
   /* ── Preset patient load ── */
   const handleLoadPreset = useCallback(() => {
     setPatientProfile(PRESET_PATIENT);
-    setUploadedFileName("tnbc_brca1_preset_case.pdf");
     setBiomarker(PRESET_PATIENT.biomarker);
     setCondition(PRESET_PATIENT.condition);
     setTimeout(() => fetchTrials(PRESET_PATIENT.biomarker, PRESET_PATIENT.condition), 0);
@@ -371,6 +370,13 @@ export default function App() {
     // Reset input so the same file can be re-uploaded
     e.target.value = "";
   }, [fetchTrials]);
+
+  /* ── Clear patient profile ── */
+  const handleClearPatientProfile = useCallback(() => {
+    setPatientProfile(null);
+    setSelectedStudy(null);
+    setUploadedFileName(null);
+  }, []);
 
   /* ── Close simulator on Escape ── */
   useEffect(() => {
@@ -483,7 +489,7 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Uploaded file indicator */}
+              {/* Uploaded file indicator — only for actual file uploads */}
               {uploadedFileName && (
                 <div className="mt-3 flex items-center gap-2 rounded-lg bg-surface-raised px-3.5 py-2 text-xs text-text-secondary">
                   <FileText className="h-3.5 w-3.5 text-accent" />
@@ -493,6 +499,23 @@ export default function App() {
                       ✓ Extracted
                     </span>
                   )}
+                </div>
+              )}
+
+              {/* Preset loaded badge — clean status without file name */}
+              {patientProfile && !uploadedFileName && (
+                <div className="mt-3 flex items-center gap-2 rounded-lg border border-accent/25 bg-accent-muted/15 px-3.5 py-2 text-xs text-text-secondary">
+                  <Check className="h-3.5 w-3.5 text-accent" />
+                  <span className="flex-1">
+                    Clinical Profile Loaded: <span className="font-medium text-text-primary">{patientProfile.biomarker}</span>
+                  </span>
+                  <button
+                    onClick={handleClearPatientProfile}
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-text-muted transition-colors duration-150 hover:bg-surface-hover hover:text-destructive cursor-pointer"
+                  >
+                    <X className="h-3 w-3" />
+                    Clear
+                  </button>
                 </div>
               )}
             </div>

@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { X, ArrowLeft, CheckCircle, AlertTriangle, Plus, Trash2, Gauge, ChevronDown, ChevronUp, Dna, Stethoscope, Beaker, Brain, FlaskConical } from "lucide-react";
+import { X, ArrowLeft, CheckCircle, AlertTriangle, Plus, Trash2, Gauge, ChevronDown, ChevronUp, Dna, Stethoscope, Beaker, Brain, FlaskConical, Copy, Check, FileText } from "lucide-react";
 
 /* ── Types ─────────────────────────────────────────── */
 
@@ -395,6 +395,7 @@ function CriteriaSection({
           return (
             <li key={i}>
               <label
+                onClick={() => onToggle(i)}
                 className={`group flex cursor-pointer items-start gap-2.5 rounded-lg border px-3.5 py-2.5 transition-all duration-150 ${
                   checkedMap[i]
                     ? "border-primary/30 bg-primary-muted/40"
@@ -425,6 +426,7 @@ function CriteriaSection({
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
+                        e.stopPropagation();
                         toggleExpand(i);
                       }}
                       className="mt-0.5 inline-flex items-center gap-1 text-xs font-medium text-primary/70 hover:text-primary transition-colors duration-150 cursor-pointer"
@@ -535,6 +537,285 @@ function CustomRuleInput({
   );
 }
 
+/* ── Referral Summary Modal ─────────────────────────── */
+
+function ReferralSummaryModal({
+  study,
+  patientProfile,
+  inclusionMap,
+  exclusionMap,
+  customRules,
+  score,
+  cat,
+  criteria,
+  onClose,
+}: {
+  study: StudyProtocol;
+  patientProfile: PatientProfile;
+  inclusionMap: Record<number, boolean>;
+  exclusionMap: Record<number, boolean>;
+  customRules: CustomRule[];
+  score: number;
+  cat: { label: string; color: string; bg: string; border: string };
+  criteria: ParsedCriteria;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const protocol = study.protocolSection;
+  const params = patientProfile.extractedParams;
+
+  const checkedInclusionCount = criteria.inclusion.filter((_, i) => inclusionMap[i]).length;
+  const uncheckedExclusionCount = criteria.exclusion.filter((_, i) => !exclusionMap[i]).length;
+  const satisfiedCustomCount = customRules.filter((r) => r.satisfied).length;
+
+  // Build the full referral letter text for copy
+  const referralText = [
+    `CLINICAL REFERRAL SUMMARY — ${cat.label.toUpperCase()}`,
+    "",
+    "────────────────────────────────────────────",
+    "PATIENT PROFILE",
+    "────────────────────────────────────────────",
+    `Mutation: ${params.mutation}`,
+    `Disease: ${params.disease}`,
+    `eGFR: ${params.egfr} mL/min`,
+    `Platelets: ${params.platelets}K/µL`,
+    `Brain Metastases: ${params.noBrainMets ? "None detected" : "Present"}`,
+    "",
+    "────────────────────────────────────────────",
+    "TARGET TRIAL",
+    "────────────────────────────────────────────",
+    `Title: ${protocol.identificationModule.briefTitle}`,
+    `NCT ID: ${protocol.identificationModule.nctId}`,
+    `Phase: ${protocol.designModule?.phases?.length ? protocol.designModule.phases.map((ph) => ph.replace("PHASE", "Phase ")).join("/") : "N/A"}`,
+    `Sponsor: ${protocol.sponsorCollaboratorsModule?.leadSponsor?.name || "Unknown"}`,
+    `Status: ${protocol.statusModule.overallStatus}`,
+    "",
+    "────────────────────────────────────────────",
+    "ELIGIBILITY RATIONALE",
+    "────────────────────────────────────────────",
+    `Match Score: ${Math.round(score)}% — ${cat.label}`,
+    `Inclusion criteria satisfied: ${checkedInclusionCount} / ${criteria.inclusion.length}`,
+    `Exclusion criteria cleared: ${uncheckedExclusionCount} / ${criteria.exclusion.length}`,
+    `Custom lab rules satisfied: ${satisfiedCustomCount} / ${customRules.length}`,
+    "",
+    "────────────────────────────────────────────",
+    "PRINCIPAL INVESTIGATOR OUTREACH DRAFT",
+    "────────────────────────────────────────────",
+    `Dear Principal Investigator,`,
+    "",
+    `I am writing to refer a patient for consideration in the ${protocol.identificationModule.briefTitle} (${protocol.identificationModule.nctId}).`,
+    "",
+    `The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${params.egfr} mL/min, platelets ${params.platelets}K/µL — fall within the study's anticipated parameters.`,
+    "",
+    `Eligibility assessment yielded a ${Math.round(score)}% match (${cat.label}), with ${checkedInclusionCount} of ${criteria.inclusion.length} inclusion criteria met and ${uncheckedExclusionCount} of ${criteria.exclusion.length} exclusion criteria cleared.`,
+    "",
+    "Please find the full patient profile and eligibility checklist attached. I welcome the opportunity to discuss this case further and provide any additional documentation required.",
+    "",
+    "Respectfully,",
+    "Aethel Bio — AI Clinical Trial Matching",
+  ].join("\n");
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(referralText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      // Fallback for environments where clipboard API is unavailable
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
+  };
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-md"
+        onClick={onClose}
+      />
+      <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 sm:p-6">
+        <div
+          className="animate-scale-in relative flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl border border-border-subtle bg-surface shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* ── Modal Header ── */}
+          <div className="flex shrink-0 items-center justify-between border-b border-border-subtle px-6 py-4">
+            <div className="flex items-center gap-3">
+              <FileText className="h-5 w-5 text-accent" />
+              <h2 className="font-heading text-base font-semibold text-text-primary">
+                Clinical Referral Summary
+              </h2>
+            </div>
+            <button
+              onClick={onClose}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors duration-150 hover:bg-surface-hover hover:text-text-primary cursor-pointer"
+              aria-label="Close modal"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* ── Scrollable Body ── */}
+          <div className="flex-1 overflow-y-auto space-y-5 px-6 py-5">
+            {/* Patient Profile Summary */}
+            <section className="rounded-xl border border-accent/20 bg-accent-muted/10 p-4">
+              <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-accent">
+                <Dna className="h-4 w-4" />
+                Patient Profile Summary
+              </h3>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                <div>
+                  <span className="text-xs text-text-muted">Mutation</span>
+                  <p className="font-medium text-text-primary">{params.mutation}</p>
+                </div>
+                <div>
+                  <span className="text-xs text-text-muted">Disease</span>
+                  <p className="font-medium text-text-primary">{params.disease}</p>
+                </div>
+                <div>
+                  <span className="text-xs text-text-muted">eGFR</span>
+                  <p className="font-medium text-text-primary">{params.egfr} mL/min</p>
+                </div>
+                <div>
+                  <span className="text-xs text-text-muted">Platelets</span>
+                  <p className="font-medium text-text-primary">{params.platelets}K/µL</p>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-xs text-text-muted">Brain Metastases</span>
+                  <p className="font-medium text-success">None detected ✓</p>
+                </div>
+              </div>
+            </section>
+
+            {/* Target Trial Info */}
+            <section className="rounded-xl border border-border-subtle bg-surface-raised p-4">
+              <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-primary">
+                <FlaskConical className="h-4 w-4" />
+                Target Trial
+              </h3>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                <div className="col-span-2">
+                  <span className="text-xs text-text-muted">Title</span>
+                  <p className="font-medium text-text-primary leading-snug">
+                    {protocol.identificationModule.briefTitle}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-xs text-text-muted">NCT ID</span>
+                  <p className="font-mono font-medium text-primary">
+                    {protocol.identificationModule.nctId}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-xs text-text-muted">Phase</span>
+                  <p className="font-medium text-text-primary">
+                    {protocol.designModule?.phases?.length
+                      ? protocol.designModule.phases.map((ph) => ph.replace("PHASE", "Phase ")).join("/")
+                      : "N/A"}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-xs text-text-muted">Sponsor</span>
+                  <p className="font-medium text-text-primary">
+                    {protocol.sponsorCollaboratorsModule?.leadSponsor?.name || "Unknown"}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-xs text-text-muted">Status</span>
+                  <p className="font-medium text-success">{protocol.statusModule.overallStatus}</p>
+                </div>
+              </div>
+            </section>
+
+            {/* Eligibility Rationale & Match Score */}
+            <section className="rounded-xl border border-border-subtle bg-surface-raised p-4">
+              <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-text-primary">
+                <Gauge className="h-4 w-4" />
+                Eligibility Rationale &amp; Match Score
+              </h3>
+              <div className="mb-3 flex items-center gap-3">
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${cat.bg} ${cat.color}`}
+                >
+                  {Math.round(score)}% — {cat.label}
+                </span>
+              </div>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between rounded-lg bg-surface px-3 py-2">
+                  <span className="text-text-secondary">Inclusion criteria satisfied</span>
+                  <span className="font-medium text-text-primary">
+                    {checkedInclusionCount} / {criteria.inclusion.length}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg bg-surface px-3 py-2">
+                  <span className="text-text-secondary">Exclusion criteria cleared</span>
+                  <span className="font-medium text-text-primary">
+                    {uncheckedExclusionCount} / {criteria.exclusion.length}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg bg-surface px-3 py-2">
+                  <span className="text-text-secondary">Custom lab rules satisfied</span>
+                  <span className="font-medium text-text-primary">
+                    {satisfiedCustomCount} / {customRules.length}
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            {/* Principal Investigator Outreach Draft */}
+            <section className="rounded-xl border border-border-subtle bg-surface-raised p-4">
+              <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-accent">
+                <FileText className="h-4 w-4" />
+                Principal Investigator Outreach Draft
+              </h3>
+              <div className="rounded-lg border border-border-subtle bg-surface p-4 text-sm leading-relaxed text-text-secondary whitespace-pre-wrap">
+                {`Dear Principal Investigator,
+
+I am writing to refer a patient for consideration in the ${protocol.identificationModule.briefTitle} (${protocol.identificationModule.nctId}).
+
+The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${params.egfr} mL/min, platelets ${params.platelets}K/µL — fall within the study's anticipated parameters.
+
+Eligibility assessment yielded a ${Math.round(score)}% match (${cat.label}), with ${checkedInclusionCount} of ${criteria.inclusion.length} inclusion criteria met and ${uncheckedExclusionCount} of ${criteria.exclusion.length} exclusion criteria cleared.
+
+Please find the full patient profile and eligibility checklist attached. I welcome the opportunity to discuss this case further and provide any additional documentation required.
+
+Respectfully,
+Aethel Bio — AI Clinical Trial Matching`}
+              </div>
+            </section>
+          </div>
+
+          {/* ── Footer Actions ── */}
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border-subtle px-6 py-4">
+            <button
+              onClick={onClose}
+              className="rounded-lg border border-border-subtle bg-surface-raised px-4 py-2 text-sm font-medium text-text-secondary transition-all duration-150 hover:bg-surface-hover active:scale-[0.97] cursor-pointer"
+            >
+              Close
+            </button>
+            <button
+              onClick={handleCopy}
+              className="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2 text-sm font-semibold text-white shadow-glow transition-all duration-150 hover:bg-accent/80 active:scale-[0.97] cursor-pointer"
+            >
+              {copied ? (
+                <>
+                  <Check className="h-4 w-4" />
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <Copy className="h-4 w-4" />
+                  Copy to Clipboard
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 /* ── Drawer Backdrop ─────────────────────────────────── */
 
 function Backdrop({ onClick }: { onClick: () => void }) {
@@ -561,6 +842,7 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
   const [inclusionMap, setInclusionMap] = useState<Record<number, boolean>>({});
   const [exclusionMap, setExclusionMap] = useState<Record<number, boolean>>({});
   const [customRules, setCustomRules] = useState<CustomRule[]>([]);
+  const [showReferral, setShowReferral] = useState(false);
 
   /* ── Auto-match when patient profile is provided ── */
   useEffect(() => {
@@ -659,11 +941,20 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
           </button>
         </div>
 
-        {/* ── Scrollable body (flex-1, never overlapped) ── */}
-        <div className="flex-1 overflow-y-auto px-5 pb-24 pt-5 space-y-6">
+        {/* ── Scrollable body (flex-1, never overlapped, pb-28 so last item clears footer) ── */}
+        <div className="flex-1 overflow-y-auto px-5 pb-28 pt-5 space-y-6">
           {/* Match Gauge */}
           <section className="flex flex-col items-center py-4">
             <MatchGauge score={score} />
+            {patientProfile && (
+              <button
+                onClick={() => setShowReferral(true)}
+                className="mt-4 inline-flex items-center gap-2 rounded-lg border border-accent/30 bg-accent-muted/15 px-4 py-2.5 text-sm font-medium text-accent transition-all duration-150 hover:bg-accent-muted/30 active:scale-[0.97] cursor-pointer"
+              >
+                <FileText className="h-4 w-4" />
+                Export Clinical Referral Summary
+              </button>
+            )}
           </section>
 
           {/* Patient Profile (when loaded from report) */}
@@ -754,7 +1045,7 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
         </div>
 
         {/* ── Sticky footer — never overlays content ── */}
-        <div className="shrink-0 border-t border-slate-800 bg-slate-900 p-4 z-20 sticky bottom-0">
+        <div className="shrink-0 border-t border-border-subtle bg-footer p-4 z-20 sticky bottom-0">
           <div className="flex items-center justify-between">
             <div>
               <p className={`text-sm font-semibold ${cat.color}`}>{cat.label}</p>
@@ -770,6 +1061,21 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
           </div>
         </div>
       </aside>
+
+      {/* ── Referral Summary Modal ── */}
+      {showReferral && patientProfile && (
+        <ReferralSummaryModal
+          study={study}
+          patientProfile={patientProfile}
+          inclusionMap={inclusionMap}
+          exclusionMap={exclusionMap}
+          customRules={customRules}
+          score={score}
+          cat={cat}
+          criteria={criteria}
+          onClose={() => setShowReferral(false)}
+        />
+      )}
     </>
   );
 }
