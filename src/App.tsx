@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Search, Dna, FlaskConical, ArrowRight, AlertCircle, Sparkles, Upload, FileText, Zap, Check, X } from "lucide-react";
+import { Search, Dna, FlaskConical, ArrowRight, AlertCircle, Sparkles, Upload, FileText, RotateCcw } from "lucide-react";
 import TrialMatchSimulator from "./TrialMatchSimulator";
 
 /* ── Types ─────────────────────────────────────────── */
@@ -348,14 +348,6 @@ export default function App() {
     }
   }, [fullStudies]);
 
-  /* ── Preset patient load ── */
-  const handleLoadPreset = useCallback(() => {
-    setPatientProfile(PRESET_PATIENT);
-    setBiomarker(PRESET_PATIENT.biomarker);
-    setCondition(PRESET_PATIENT.condition);
-    setTimeout(() => fetchTrials(PRESET_PATIENT.biomarker, PRESET_PATIENT.condition), 0);
-  }, [fetchTrials]);
-
   /* ── File upload handler ── */
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -371,11 +363,17 @@ export default function App() {
     e.target.value = "";
   }, [fetchTrials]);
 
-  /* ── Clear patient profile ── */
-  const handleClearPatientProfile = useCallback(() => {
+  /* ── Reset workspace ── */
+  const handleReset = useCallback(() => {
+    setBiomarker("");
+    setCondition("");
     setPatientProfile(null);
-    setSelectedStudy(null);
     setUploadedFileName(null);
+    setTrials([]);
+    setFullStudies([]);
+    setSelectedStudy(null);
+    setError(null);
+    setSearched(false);
   }, []);
 
   /* ── Close simulator on Escape ── */
@@ -464,28 +462,19 @@ export default function App() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".pdf,application/pdf"
+                  accept=".pdf,.txt,.docx,.doc"
                   onChange={handleFileUpload}
                   className="hidden"
-                  aria-label="Upload pathology or NGS report PDF"
+                  aria-label="Upload pathology or NGS report"
                 />
 
-                {/* Upload button */}
+                {/* Upload button — single primary upload action */}
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   className="inline-flex items-center gap-2 rounded-lg border border-border-subtle bg-surface-raised px-4 py-2.5 text-sm font-medium text-text-secondary transition-all duration-150 hover:border-accent/40 hover:bg-accent-muted/20 hover:text-accent active:scale-[0.97] cursor-pointer"
                 >
                   <Upload className="h-4 w-4" />
-                  📄 Upload Pathology / NGS Report
-                </button>
-
-                {/* Preset case button */}
-                <button
-                  onClick={handleLoadPreset}
-                  className="inline-flex items-center gap-2 rounded-lg bg-accent/15 px-4 py-2.5 text-sm font-medium text-accent transition-all duration-150 hover:bg-accent/25 active:scale-[0.97] cursor-pointer"
-                >
-                  <Zap className="h-4 w-4" />
-                  ⚡ Load Preset Case: TNBC (BRCA1+)
+                  📄 Upload Pathology / NGS Report (.pdf, .txt, .docx)
                 </button>
               </div>
 
@@ -502,29 +491,14 @@ export default function App() {
                 </div>
               )}
 
-              {/* Preset loaded badge — clean status without file name */}
-              {patientProfile && !uploadedFileName && (
-                <div className="mt-3 flex items-center gap-2 rounded-lg border border-accent/25 bg-accent-muted/15 px-3.5 py-2 text-xs text-text-secondary">
-                  <Check className="h-3.5 w-3.5 text-accent" />
-                  <span className="flex-1">
-                    Clinical Profile Loaded: <span className="font-medium text-text-primary">{patientProfile.biomarker}</span>
-                  </span>
-                  <button
-                    onClick={handleClearPatientProfile}
-                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-text-muted transition-colors duration-150 hover:bg-surface-hover hover:text-destructive cursor-pointer"
-                  >
-                    <X className="h-3 w-3" />
-                    Clear
-                  </button>
-                </div>
-              )}
-            </div>
+              </div>
 
-            {/* Search button */}
+            {/* ── Search row: Search + Reset buttons ── */}
+          <div className="flex items-center gap-3">
             <button
               onClick={handleSearch}
               disabled={loading}
-              className="flex w-full items-center justify-center gap-2.5 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white shadow-glow transition-all duration-150 hover:bg-primary-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+              className="flex flex-1 items-center justify-center gap-2.5 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white shadow-glow transition-all duration-150 hover:bg-primary-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
             >
               {loading ? (
                 <>
@@ -541,6 +515,16 @@ export default function App() {
                 </>
               )}
             </button>
+
+            <button
+              onClick={handleReset}
+              disabled={loading}
+              className="inline-flex items-center gap-2 rounded-xl border border-border-subtle bg-surface-raised px-4 py-3 text-sm font-medium text-text-secondary transition-all duration-150 hover:border-destructive/40 hover:bg-destructive-muted/20 hover:text-destructive active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+            >
+              <RotateCcw className="h-4 w-4" />
+              <span className="hidden sm:inline">Reset Workspace</span>
+            </button>
+          </div>
           </div>
         </section>
 
