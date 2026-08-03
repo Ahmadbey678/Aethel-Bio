@@ -682,8 +682,6 @@ function ReferralSummaryModal({
       return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
     };
 
-    let y = margin;
-
     const fillPageBg = () => {
       const [r, g, b] = hexRgb(pageBg);
       pdf.setFillColor(r, g, b);
@@ -692,132 +690,129 @@ function ReferralSummaryModal({
 
     fillPageBg();
 
-    // We'll track y and draw incrementally
+    /* ── Single, strictly incrementing Y coordinate ── */
+    let currentY = 15;
 
-    /* ── 1. Brand Header ── */
-    const drawHeader = () => {
+    /* ── 1. Header Block: Title + Match Badge + Date ── */
+    {
+      const cardH = 26;
       const [br, bgc, bb] = hexRgb(cardBg);
       const [borR, borG, borB] = hexRgb(border);
       pdf.setFillColor(br, bgc, bb);
       pdf.setDrawColor(borR, borG, borB);
-      pdf.roundedRect(margin, y, pw, 14, 2, 2, "FD");
+      pdf.roundedRect(margin, currentY, pw, cardH, 2, 2, "FD");
+
       const [hR, hG, hB] = hexRgb(blue);
       pdf.setTextColor(hR, hG, hB);
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(13);
-      pdf.text("Aethel Bio \u2014 Clinical Referral Summary", margin + pw / 2, y + 6, { align: "center" });
+      pdf.text("Aethel Bio \u2014 Clinical Referral Summary", margin + pw / 2, currentY + 6, { align: "center" });
+
+      const catBgHex = matchPct >= 80 ? "#166534" : matchPct >= 50 ? "#713f12" : "#7f1d1d";
+      const badgeFgHex = matchPct >= 80 ? "#22c55e" : matchPct >= 50 ? "#eab308" : "#ef4444";
+      const badgeText = `${matchPct}% \u2014 ${catLabel}`;
+      const [bR, bG, bB] = hexRgb(catBgHex);
+      const [bfR, bfG, bfB] = hexRgb(badgeFgHex);
+      pdf.setFillColor(bR, bG, bB);
+      pdf.roundedRect(margin + pw / 2 - 30, currentY + 9, 60, 6, 2, 2, "F");
+      pdf.setTextColor(bfR, bfG, bfB);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(9);
+      pdf.text(badgeText, margin + pw / 2, currentY + 13.5, { align: "center" });
+
       const [mR, mG, mb] = hexRgb(muted);
       pdf.setTextColor(mR, mG, mb);
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(9);
-      pdf.text(dateStr, margin + pw / 2, y + 11, { align: "center" });
-      y += 18;
-    };
-    drawHeader();
+      pdf.text(dateStr, margin + pw / 2, currentY + 21, { align: "center" });
 
-    /* ── 2. Match Score Banner ── */
-    const drawMatchBanner = () => {
-      const catColor = matchPct >= 80 ? "#166534" : matchPct >= 50 ? "#713f12" : "#7f1d1d";
-      const [cr, cg, cb] = hexRgb(catColor);
-      const [borR, borG, borB] = hexRgb(border);
-      pdf.setFillColor(cr, cg, cb);
-      pdf.setDrawColor(borR, borG, borB);
-      pdf.roundedRect(margin, y, pw, 12, 2, 2, "FD");
-      const badgeFgHex = matchPct >= 80 ? "#22c55e" : matchPct >= 50 ? "#eab308" : "#ef4444";
-      const [fr, fg, fb] = hexRgb(badgeFgHex);
-      pdf.setTextColor(fr, fg, fb);
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(12);
-      pdf.text(`${matchPct}% \u2014 ${catLabel}`, margin + pw / 2, y + 8, { align: "center" });
-      y += 16;
-    };
-    drawMatchBanner();
+      currentY += 35;
+    }
 
-    /* ── 3. Patient Profile ── */
-    const drawPatientProfile = () => {
+    /* ── 2. Patient Profile (X1=20, X2=110) ── */
+    {
       const [cr, cg, cb] = hexRgb(cardBg);
       const [borR, borG, borB] = hexRgb(border);
       pdf.setFillColor(cr, cg, cb);
       pdf.setDrawColor(borR, borG, borB);
-      const cardH = 38;
-      pdf.roundedRect(margin, y, pw, cardH, 2, 2, "FD");
 
-      // Header
+      const col1X = 20;
+      const col2X = 110;
+      const rowH = 9;
+      const cardH = 42;
+      pdf.roundedRect(margin, currentY, pw, cardH, 2, 2, "FD");
+
       const [hR, hG, hB] = hexRgb(blue);
       pdf.setTextColor(hR, hG, hB);
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(9);
-      pdf.text("PATIENT PROFILE SUMMARY", margin + 4, y + 4);
-
-      // Divider
+      pdf.text("PATIENT PROFILE SUMMARY", margin + 4, currentY + 4);
       pdf.setDrawColor(borR, borG, borB);
-      pdf.line(margin, y + 7, margin + pw, y + 7);
+      pdf.line(margin, currentY + 7, margin + pw, currentY + 7);
 
-      // Label-value pairs in 2 columns
-      const pairs = [
-        { label: "Mutation", value: params.mutation, valueColor: white },
-        { label: "Disease", value: params.disease, valueColor: white },
-        { label: "eGFR", value: `${params.egfr} mL/min`, valueColor: white },
-        { label: "Platelets", value: `${params.platelets}K/\u00B5L`, valueColor: white },
-        { label: "Brain Metastases", value: "\u2713 None detected", valueColor: green },
-      ];
+      const [mR, mG, mb] = hexRgb(muted);
+      const [vR, vG, vB] = hexRgb(white);
 
-      const colX = [margin + 4, margin + pw / 2 + 2];
-      const rowH = 5.5;
-
-      pairs.forEach((p, i) => {
-        const col = i % 2;
-        const row = Math.floor(i / 2);
-        const lx = colX[col];
-        const ly = y + 10 + row * rowH;
-
-        const [mR, mG, mb] = hexRgb(muted);
+      const drawLabelValue = (label: string, value: string, x: number, row: number, valColor?: string) => {
+        const baseY = currentY + 10 + row * rowH;
         pdf.setTextColor(mR, mG, mb);
         pdf.setFont("helvetica", "normal");
         pdf.setFontSize(7);
-        pdf.text(p.label, lx, ly);
-
-        const [vR, vG, vB] = hexRgb(p.valueColor);
-        pdf.setTextColor(vR, vG, vB);
+        pdf.text(label, x, baseY);
+        if (valColor) {
+          const [cR, cG, cB] = hexRgb(valColor);
+          pdf.setTextColor(cR, cG, cB);
+        } else {
+          pdf.setTextColor(vR, vG, vB);
+        }
         pdf.setFont("helvetica", "bold");
         pdf.setFontSize(9);
-        pdf.text(p.value, lx, ly + 4);
-      });
+        pdf.text(value, x, baseY + 4);
+      };
 
-      y += cardH + 4;
-    };
-    drawPatientProfile();
+      drawLabelValue("Mutation", params.mutation, col1X, 0);
+      drawLabelValue("Disease", params.disease, col2X, 0);
+      drawLabelValue("eGFR", `${params.egfr} mL/min`, col1X, 1);
+      drawLabelValue("Platelets", `${params.platelets}K/\u00B5L`, col2X, 1);
+      drawLabelValue("Brain Metastases", "\u2713 None detected", col1X, 2, green);
 
-    /* ── 4. Target Trial ── */
-    const drawTargetTrial = () => {
+      currentY += cardH + 4;
+    }
+
+    /* ── 3. Target Trial ── */
+    {
       const [cr, cg, cb] = hexRgb(cardBg);
       const [borR, borG, borB] = hexRgb(border);
       pdf.setFillColor(cr, cg, cb);
       pdf.setDrawColor(borR, borG, borB);
       const cardH = 46;
-      pdf.roundedRect(margin, y, pw, cardH, 2, 2, "FD");
+      pdf.roundedRect(margin, currentY, pw, cardH, 2, 2, "FD");
 
       const [hR, hG, hB] = hexRgb(blue);
       pdf.setTextColor(hR, hG, hB);
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(9);
-      pdf.text("TARGET TRIAL", margin + 4, y + 4);
-
+      pdf.text("TARGET TRIAL", margin + 4, currentY + 4);
       pdf.setDrawColor(borR, borG, borB);
-      pdf.line(margin, y + 7, margin + pw, y + 7);
+      pdf.line(margin, currentY + 7, margin + pw, currentY + 7);
 
-      // Title (full width)
+      // Title — wrap at 170mm, loop lines explicitly (+6 mm per line)
       const [mR, mG, mb] = hexRgb(muted);
       pdf.setTextColor(mR, mG, mb);
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(6);
-      pdf.text("Title", margin + 4, y + 11);
-      const titleLines = pdf.splitTextToSize(briefTitle, pw - 10);
+      pdf.text("Title", margin + 4, currentY + 11);
+
+      const wrappedTitle = pdf.splitTextToSize(briefTitle, 170);
       pdf.setTextColor(248, 250, 252);
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(9);
-      pdf.text(titleLines, margin + 4, y + 15);
-      const titleUsed = titleLines.length * 3.5;
+      let titleY = currentY + 15;
+      wrappedTitle.forEach((line: string) => {
+        pdf.text(line, margin + 4, titleY);
+        titleY += 6;
+      });
+      const titleUsed = wrappedTitle.length * 6;
 
       // 2-column grid: NCT ID, Phase, Sponsor, Status
       const fields = [
@@ -832,7 +827,7 @@ function ReferralSummaryModal({
         const col = i % 2;
         const row = Math.floor(i / 2);
         const fx = colX[col];
-        const fy = y + 15 + titleUsed + 3 + row * 8;
+        const fy = currentY + 15 + titleUsed + 3 + row * 8;
 
         pdf.setTextColor(mR, mG, mb);
         pdf.setFont("helvetica", "normal");
@@ -846,76 +841,72 @@ function ReferralSummaryModal({
         pdf.text(f.value, fx, fy + 4);
       });
 
-      y += cardH + 4;
-    };
-    drawTargetTrial();
-
-    /* ── 5. Eligibility Rationale ── */
-    const drawEligibility = () => {
+      currentY += cardH + 4;
+    }
+    /* ── 4. Eligibility Rationale (no pipes; label at 20, value right at 180) ── */
+    {
       const [cr, cg, cb] = hexRgb(cardBg);
       const [borR, borG, borB] = hexRgb(border);
       pdf.setFillColor(cr, cg, cb);
       pdf.setDrawColor(borR, borG, borB);
       const cardH = 38;
-      pdf.roundedRect(margin, y, pw, cardH, 2, 2, "FD");
+      pdf.roundedRect(margin, currentY, pw, cardH, 2, 2, "FD");
 
       const [hR, hG, hB] = hexRgb(blue);
       pdf.setTextColor(hR, hG, hB);
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(9);
-      pdf.text("ELIGIBILITY RATIONALE & MATCH SCORE", margin + 4, y + 4);
+      pdf.text("ELIGIBILITY RATIONALE & MATCH SCORE", margin + 4, currentY + 4);
       pdf.setDrawColor(borR, borG, borB);
-      pdf.line(margin, y + 7, margin + pw, y + 7);
+      pdf.line(margin, currentY + 7, margin + pw, currentY + 7);
 
       // Badge centered
-      const catColor = matchPct >= 80 ? "#166534" : matchPct >= 50 ? "#713f12" : "#7f1d1d";
+      const catBgHex = matchPct >= 80 ? "#166534" : matchPct >= 50 ? "#713f12" : "#7f1d1d";
       const badgeFgHex = matchPct >= 80 ? "#22c55e" : matchPct >= 50 ? "#eab308" : "#ef4444";
-      const [bR, bG, bB] = hexRgb(catColor);
-      const [bfR, bfG, bfB] = hexRgb(badgeFgHex);
       const badgeText = `${matchPct}% \u2014 ${catLabel}`;
+      const [bR, bG, bB] = hexRgb(catBgHex);
+      const [bfR, bfG, bfB] = hexRgb(badgeFgHex);
       pdf.setFillColor(bR, bG, bB);
-      pdf.roundedRect(margin + pw / 2 - 20, y + 8, 40, 6, 2, 2, "F");
+      pdf.roundedRect(margin + pw / 2 - 20, currentY + 8, 40, 6, 2, 2, "F");
       pdf.setTextColor(bfR, bfG, bfB);
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(8);
-      pdf.text(badgeText, margin + pw / 2, y + 12.5, { align: "center" });
+      pdf.text(badgeText, margin + pw / 2, currentY + 12.5, { align: "center" });
 
-      // Rows
+      // Three clean single-line metrics (no pipe chars)
       const rows = [
         { label: "Inclusion criteria satisfied", value: `${checkedInclusionCount} / ${criteria.inclusion.length}` },
         { label: "Exclusion criteria cleared", value: `${uncheckedExclusionCount} / ${criteria.exclusion.length}` },
         { label: "Custom lab rules satisfied", value: `${satisfiedCustomCount} / ${customRules.length}` },
       ];
 
+      const [mR, mG, mb] = hexRgb(muted);
       rows.forEach((r, i) => {
-        const ry = y + 18 + i * 6;
+        const ry = currentY + 18 + i * 6.5;
         if (i > 0) {
           pdf.setDrawColor(borR, borG, borB);
-          pdf.line(margin + 4, ry - 0.5, margin + pw - 4, ry - 0.5);
+          pdf.line(margin + 4, ry - 1, margin + pw - 4, ry - 1);
         }
-        const [mR, mG, mb] = hexRgb(muted);
+        // Label left-aligned at X=20
         pdf.setTextColor(mR, mG, mb);
         pdf.setFont("helvetica", "normal");
         pdf.setFontSize(8);
-        pdf.text(r.label, margin + 4, ry + 4);
+        pdf.text(r.label, 20, ry + 4);
+        // Value right-aligned at X=180
         pdf.setTextColor(248, 250, 252);
         pdf.setFont("helvetica", "bold");
-        pdf.text(r.value, margin + pw - 4, ry + 4, { align: "right" });
+        pdf.text(r.value, 180, ry + 4, { align: "right" });
       });
 
-      y += cardH + 4;
-    };
-    drawEligibility();
+      currentY += cardH + 4;
+    }
 
-    /* ── 6. Outreach Draft ── */
-    const drawOutreachDraft = () => {
-      // Check if we need a new page before starting this card
-      if (y > 230) {
+    /* ── 5. Outreach Draft (with dynamic pagebreak at currentY > 250) ── */
+    {
+      if (currentY > 250) {
         pdf.addPage();
-        const [pR, pG, pB] = hexRgb(pageBg);
-        pdf.setFillColor(pR, pG, pB);
-        pdf.rect(0, 0, 210, 297, "F");
-        y = margin;
+        fillPageBg();
+        currentY = 20;
       }
 
       const [cr, cg, cb] = hexRgb(cardBg);
@@ -938,50 +929,52 @@ Aethel Bio \u2014 AI Clinical Trial Matching`;
 
       // Estimate card height from wrapped text
       const textLines = pdf.splitTextToSize(letterText, pw - 10);
-      // header + divider + padding
       const cardH = 11 + textLines.length * 3.6 + 4;
 
-      // If card pushes past page, add page break
-      if (y + cardH > 280) {
+      // Safety pagebreak if card overflows
+      if (currentY + cardH > 280) {
         pdf.addPage();
-        const [pR, pG, pB] = hexRgb(pageBg);
-        pdf.setFillColor(pR, pG, pB);
-        pdf.rect(0, 0, 210, 297, "F");
-        y = margin;
+        fillPageBg();
+        currentY = 20;
       }
 
-      pdf.roundedRect(margin, y, pw, cardH, 2, 2, "FD");
+      pdf.roundedRect(margin, currentY, pw, cardH, 2, 2, "FD");
 
       const [hR, hG, hB] = hexRgb(blue);
       pdf.setTextColor(hR, hG, hB);
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(9);
-      pdf.text("PRINCIPAL INVESTIGATOR OUTREACH DRAFT", margin + 4, y + 4);
+      pdf.text("PRINCIPAL INVESTIGATOR OUTREACH DRAFT", margin + 4, currentY + 4);
       pdf.setDrawColor(borR, borG, borB);
-      pdf.line(margin, y + 7, margin + pw, y + 7);
+      pdf.line(margin, currentY + 7, margin + pw, currentY + 7);
 
       pdf.setTextColor(248, 250, 252);
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(9);
-      pdf.text(textLines, margin + 4, y + 11);
+      pdf.text(textLines, margin + 4, currentY + 11);
 
-      y += cardH + 6;
-    };
-    drawOutreachDraft();
+      currentY += cardH + 6;
+    }
 
-    /* ── 7. Footer ── */
-    const drawFooter = () => {
+    /* ── 6. Footer ── */
+    {
+      // Pagebreak safety — push footer to next page if needed
+      if (currentY > 250) {
+        pdf.addPage();
+        fillPageBg();
+        currentY = 20;
+      }
+
       const [fR, fG, fB] = hexRgb(footer);
       const [borR, borG, borB] = hexRgb(border);
       pdf.setDrawColor(borR, borG, borB);
-      pdf.line(margin, y, margin + pw, y);
+      pdf.line(margin, currentY, margin + pw, currentY);
       pdf.setTextColor(fR, fG, fB);
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(7);
       const footerText = `Generated by Aethel Bio \u2014 AI Clinical Trial Matching  \u2022  ${dateStr} at ${timeStr}`;
-      pdf.text(footerText, margin + pw / 2, y + 6, { align: "center" });
-    };
-    drawFooter();
+      pdf.text(footerText, margin + pw / 2, currentY + 6, { align: "center" });
+    }
 
     pdf.save(`Clinical_Referral_Summary_${nctId}.pdf`);
   };
