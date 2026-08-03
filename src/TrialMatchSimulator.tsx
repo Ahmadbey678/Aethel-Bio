@@ -906,6 +906,20 @@ Aethel Bio — AI Clinical Trial Matching</div>
       autoPaging: "text",
       width: 190,
       windowWidth: 820,
+      html2canvas: {
+        onclone: (clonedDoc: Document) => {
+          // Strip any stylesheets that use oklch — html2canvas v1.x can't parse it
+          clonedDoc.querySelectorAll('style, link[rel="stylesheet"]').forEach((el) => {
+            const content =
+              (el as HTMLStyleElement).textContent ||
+              (el as HTMLLinkElement).href ||
+              "";
+            if (content.includes("oklch")) {
+              el.remove();
+            }
+          });
+        },
+      },
     });
   };
 
