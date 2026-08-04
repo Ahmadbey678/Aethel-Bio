@@ -43,6 +43,7 @@ interface CustomRule {
   id: string;
   text: string;
   satisfied: boolean;
+  required?: boolean;
 }
 
 interface ExtractedParams {
@@ -110,6 +111,12 @@ function getGaugeColor(score: number): string {
   if (score >= 80) return "stroke-success";
   if (score >= 50) return "stroke-warning";
   return "stroke-destructive";
+}
+
+/* ── OCR / text normalisation for outreach ──────────── */
+
+function normalizeMutationForOutreach(text: string): string {
+  return text.replace(/p\.\s*Gin\b/g, "p.Gln");
 }
 
 /* ── Eligibility text parser ────────────────────────── */
@@ -264,11 +271,11 @@ function autoMatchExclusion(
 
 /* ── Circular Gauge ──────────────────────────────────── */
 
-function MatchGauge({ score }: { score: number }) {
+function MatchGauge({ score, cat: overrideCat }: { score: number; cat?: { label: string; color: string; bg: string; border: string } }) {
   const radius = 48;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (score / 100) * circumference;
-  const cat = getMatchCategory(score);
+  const cat = overrideCat ?? getMatchCategory(score);
   const color = getGaugeColor(score);
 
   return (
@@ -536,13 +543,15 @@ function CustomRuleInput({
                   )}
                 </button>
                 <span className="flex-1 text-sm text-text-primary">{rule.text}</span>
-                <button
-                  onClick={() => onRemove(rule.id)}
-                  className="flex h-6 w-6 items-center justify-center rounded text-text-muted opacity-0 transition-all duration-150 hover:bg-destructive-muted hover:text-destructive group-hover:opacity-100 cursor-pointer"
-                  title="Remove rule"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                {!rule.required && (
+                  <button
+                    onClick={() => onRemove(rule.id)}
+                    className="flex h-6 w-6 items-center justify-center rounded text-text-muted opacity-0 transition-all duration-150 hover:bg-destructive-muted hover:text-destructive group-hover:opacity-100 cursor-pointer"
+                    title="Remove rule"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             </li>
           ))}
@@ -624,7 +633,7 @@ function ReferralSummaryModal({
     "",
     `I am writing to refer a patient for consideration in the ${protocol.identificationModule.briefTitle} (${protocol.identificationModule.nctId}).`,
     "",
-    `The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${fmtL(params.egfr, "mL/min")}, platelets ${fmtL(params.platelets, "K/µL")} — fall within the study's anticipated parameters.`,
+    `The patient presents with ${params.disease} and carries the ${normalizeMutationForOutreach(params.mutation)} mutation. Key laboratory values — eGFR ${fmtL(params.egfr, "mL/min")}, platelets ${fmtL(params.platelets, "K/µL")} — fall within the study's anticipated parameters.`,
     "",
     `Eligibility assessment yielded a ${Math.round(score)}% match (${cat.label}), with ${checkedInclusionCount} of ${
       criteria.inclusion.length
@@ -661,60 +670,46 @@ function ReferralSummaryModal({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  /* ── Direct PDF Export via html-to-image + jsPDF ── */
+  /* ── Multi‑page PDF Export via html-to-image + jsPDF ── */
   const handleDownloadPdf = useCallback(async () => {
-    const el = printRef.current;
-    if (!el) return;
-
+    if (!printRef.current) return;
     setPdfGenerating(true);
+
     try {
-      // Temporarily show the element with A4-like width so toPng captures at correct aspect ratio
-      el.style.display = "block";
-      el.style.position = "fixed";
-      el.style.top = "0";
-      el.style.left = "0";
-      el.style.width = "794px"; // ~210mm at 96dpi
-      el.style.zIndex = "-9999";
-      el.style.overflow = "visible";
-      // Wait a tick for layout to settle
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-
-      const imgData = await toPng(el, {
-        quality: 0.95,
-        backgroundColor: "#0b1329",
-        pixelRatio: 2,
-      });
-
-      // Restore hidden state
-      el.style.display = "none";
-      el.style.position = "";
-      el.style.top = "";
-      el.style.left = "";
-      el.style.width = "";
-      el.style.zIndex = "";
-      el.style.overflow = "";
-
       const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
-      const pdfWidth = 210;
-      // Load image into jsPDF to get its intrinsic dimensions
-      const imgProps = pdf.getImageProperties(imgData);
-      const pdfHeight = (pdfWidth * imgProps.height) / imgProps.width;
-      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight, undefined, "FAST");
+      const pdfWidth = 210; // mm
+
+      // Page sections are already rendered (parent is offscreen, not display:none)
+      const page1Container = printRef.current.querySelector<HTMLElement>("#pdf-page-1");
+      const page2Container = printRef.current.querySelector<HTMLElement>("#pdf-page-2");
+
+      if (page1Container) {
+        const imgData1 = await toPng(page1Container, {
+          quality: 0.95,
+          backgroundColor: "#0b1329",
+          pixelRatio: 2,
+        });
+        const imgProps1 = pdf.getImageProperties(imgData1);
+        const pdfHeight1 = (pdfWidth * imgProps1.height) / imgProps1.width;
+        pdf.addImage(imgData1, "PNG", 0, 0, pdfWidth, pdfHeight1, undefined, "FAST");
+      }
+
+      if (page2Container) {
+        const imgData2 = await toPng(page2Container, {
+          quality: 0.95,
+          backgroundColor: "#0b1329",
+          pixelRatio: 2,
+        });
+        const imgProps2 = pdf.getImageProperties(imgData2);
+        const pdfHeight2 = (pdfWidth * imgProps2.height) / imgProps2.width;
+        pdf.addPage();
+        pdf.addImage(imgData2, "PNG", 0, 0, pdfWidth, pdfHeight2, undefined, "FAST");
+      }
 
       const nctId = protocol.identificationModule.nctId;
       pdf.save(`Clinical_Referral_Summary_${nctId}.pdf`);
     } catch (err) {
       console.error("PDF generation failed:", err);
-      // Ensure element is hidden if capture fails
-      if (el) {
-        el.style.display = "none";
-        el.style.position = "";
-        el.style.top = "";
-        el.style.left = "";
-        el.style.width = "";
-        el.style.zIndex = "";
-        el.style.overflow = "";
-      }
     } finally {
       setPdfGenerating(false);
     }
@@ -842,6 +837,21 @@ function ReferralSummaryModal({
                   {Math.round(score)}% — {cat.label}
                 </span>
               </div>
+
+              {/* Hard Gate / Eligibility Status */}
+              {!cat.label.includes("Ineligible") && (
+                <div className="mb-2 flex items-center gap-2 rounded-lg bg-success-muted/30 px-3 py-1.5 text-xs font-medium text-success">
+                  <CheckCircle className="h-3.5 w-3.5" />
+                  Eligible Candidate — Baseline inclusion threshold met
+                </div>
+              )}
+              {cat.label.includes("Ineligible") && (
+                <div className="mb-2 flex items-center gap-2 rounded-lg bg-destructive-muted px-3 py-1.5 text-xs font-medium text-destructive">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  Ineligible / Unmet Inclusion Criteria — score capped at 0%
+                </div>
+              )}
+
               <div className="space-y-2 text-sm">
                 <div className="flex items-center justify-between rounded-lg bg-surface px-3 py-2">
                   <span className="text-text-secondary">Inclusion criteria satisfied</span>
@@ -864,6 +874,30 @@ function ReferralSummaryModal({
               </div>
             </section>
 
+            {/* Core Criteria Checklist */}
+            {criteria.inclusion.length > 0 && (
+              <section className="rounded-xl border border-border-subtle bg-surface-raised p-4">
+                <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-success">
+                  <CheckCircle className="h-4 w-4" />
+                  Core Criteria Checklist &mdash; Inclusion ({checkedInclusionCount}/{criteria.inclusion.length})
+                </h3>
+                <ul className="space-y-1.5">
+                  {criteria.inclusion.map((item, i) => (
+                    <li key={i} className="flex items-start gap-2.5 rounded-lg border border-border-subtle bg-surface px-3 py-2 text-sm">
+                      {inclusionMap[i] ? (
+                        <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+                      ) : (
+                        <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-destructive/50 bg-destructive-muted/20 text-xs font-bold text-destructive">
+                          ✗
+                        </span>
+                      )}
+                      <span className="text-text-primary">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
             {/* Principal Investigator Outreach Draft */}
             <section className="rounded-xl border border-border-subtle bg-surface-raised p-4">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-accent">
@@ -875,7 +909,7 @@ function ReferralSummaryModal({
 
 I am writing to refer a patient for consideration in the ${protocol.identificationModule.briefTitle} (${protocol.identificationModule.nctId}).
 
-The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${fmtL(params.egfr, "mL/min")}, platelets ${fmtL(params.platelets, "K/µL")} — fall within the study's anticipated parameters.
+The patient presents with ${params.disease} and carries the ${normalizeMutationForOutreach(params.mutation)} mutation. Key laboratory values — eGFR ${fmtL(params.egfr, "mL/min")}, platelets ${fmtL(params.platelets, "K/µL")} — fall within the study's anticipated parameters.
 
 Eligibility assessment yielded a ${Math.round(score)}% match (${cat.label}), with ${checkedInclusionCount} of ${criteria.inclusion.length} inclusion criteria met and ${uncheckedExclusionCount} of ${criteria.exclusion.length} exclusion criteria cleared.
 
@@ -940,125 +974,170 @@ Aethel Bio — AI Clinical Trial Matching`}
         </div>
       </div>
 
-      {/* ── Printable Print Overlay ── */}
+      {/* ── Printable Print Overlay (split into pages) ── */}
       <div id="printable-referral-summary" ref={printRef} style={{ display: "none" }}>
-        <div style={{ background: "#0b1329", color: "#f8fafc", fontFamily: "Arial, Helvetica, sans-serif", padding: "56px", minHeight: "297mm" }}>
-          {/* Header */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "1px solid #1e293b", paddingBottom: "12px", marginBottom: "20px" }}>
-            <div>
-              <div style={{ color: "#38bdf8", fontSize: "22px", fontWeight: "bold" }}>Aethel Bio</div>
-              <div style={{ color: "#38bdf8", fontSize: "14px", fontWeight: "normal" }}>Clinical Referral Summary</div>
+        {/* ── Page 1: Patient Profile, Trial, Eligibility, Checklist ── */}
+        <div id="pdf-page-1" style={{ display: "none" }}>
+          <div style={{ background: "#0b1329", color: "#f8fafc", fontFamily: "Arial, Helvetica, sans-serif", padding: "56px" }}>
+            {/* Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "1px solid #1e293b", paddingBottom: "12px", marginBottom: "20px" }}>
+              <div>
+                <div style={{ color: "#38bdf8", fontSize: "22px", fontWeight: "bold" }}>Aethel Bio</div>
+                <div style={{ color: "#38bdf8", fontSize: "14px", fontWeight: "normal" }}>Clinical Referral Summary</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ color: badgeFg, fontSize: "14px", fontWeight: "bold" }}>{matchPct}% — {catLabel}</div>
+                <div style={{ color: "#94a3b8", fontSize: "11px", marginTop: "4px" }}>{dateStr}</div>
+              </div>
             </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ color: badgeFg, fontSize: "14px", fontWeight: "bold" }}>{matchPct}% — {catLabel}</div>
-              <div style={{ color: "#94a3b8", fontSize: "11px", marginTop: "4px" }}>{dateStr}</div>
+
+            {/* Patient Profile */}
+            <div className="print-card" style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "6px", padding: "14px", marginBottom: "14px" }}>
+              <div style={{ color: "#38bdf8", fontSize: "12px", fontWeight: "bold", marginBottom: "10px", borderBottom: "1px solid #1e293b", paddingBottom: "6px" }}>PATIENT PROFILE SUMMARY</div>
+              <div style={{ display: "flex", gap: "20px" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ marginBottom: "10px" }}>
+                    <div style={{ color: "#94a3b8", fontSize: "10px" }}>Mutation</div>
+                    <div style={{ color: "#f8fafc", fontSize: "13px", fontWeight: "bold" }}>{params.mutation}</div>
+                  </div>
+                  <div style={{ marginBottom: "10px" }}>
+                    <div style={{ color: "#94a3b8", fontSize: "10px" }}>eGFR</div>
+                    <div style={{ color: "#f8fafc", fontSize: "13px", fontWeight: "bold" }}>{fmtL(params.egfr, "mL/min")}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: "#94a3b8", fontSize: "10px" }}>Brain Metastases</div>
+                    <div style={{ color: "#22c55e", fontSize: "13px", fontWeight: "bold" }}>✓ None detected</div>
+                  </div>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ marginBottom: "10px" }}>
+                    <div style={{ color: "#94a3b8", fontSize: "10px" }}>Disease</div>
+                    <div style={{ color: "#f8fafc", fontSize: "13px", fontWeight: "bold" }}>{params.disease}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: "#94a3b8", fontSize: "10px" }}>Platelets</div>
+                    <div style={{ color: "#f8fafc", fontSize: "13px", fontWeight: "bold" }}>{fmtL(params.platelets, "K/µL")}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Target Trial */}
+            <div className="print-card" style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "6px", padding: "14px", marginBottom: "14px" }}>
+              <div style={{ color: "#38bdf8", fontSize: "12px", fontWeight: "bold", marginBottom: "10px", borderBottom: "1px solid #1e293b", paddingBottom: "6px" }}>TARGET TRIAL</div>
+              <div style={{ marginBottom: "8px" }}>
+                <div style={{ color: "#94a3b8", fontSize: "10px" }}>Title</div>
+                <div style={{ color: "#f8fafc", fontSize: "12px", fontWeight: "bold" }}>{protocol.identificationModule.briefTitle}</div>
+              </div>
+              <div style={{ display: "flex", gap: "20px" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ marginBottom: "8px" }}>
+                    <div style={{ color: "#94a3b8", fontSize: "10px" }}>NCT ID</div>
+                    <div style={{ color: "#38bdf8", fontSize: "12px", fontWeight: "bold", fontFamily: "Courier, monospace" }}>{protocol.identificationModule.nctId}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: "#94a3b8", fontSize: "10px" }}>Sponsor</div>
+                    <div style={{ color: "#f8fafc", fontSize: "12px", fontWeight: "bold" }}>{protocol.sponsorCollaboratorsModule?.leadSponsor?.name || "Unknown"}</div>
+                  </div>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ marginBottom: "8px" }}>
+                    <div style={{ color: "#94a3b8", fontSize: "10px" }}>Phase</div>
+                    <div style={{ color: "#f8fafc", fontSize: "12px", fontWeight: "bold" }}>{protocol.designModule?.phases?.length ? protocol.designModule.phases.map((ph) => ph.replace("PHASE", "Phase ")).join("/") : "N/A"}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: "#94a3b8", fontSize: "10px" }}>Status</div>
+                    <div style={{ color: "#22c55e", fontSize: "12px", fontWeight: "bold" }}>{protocol.statusModule.overallStatus}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Eligibility Rationale */}
+            <div className="print-card" style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "6px", padding: "14px", marginBottom: "14px" }}>
+              <div style={{ color: "#38bdf8", fontSize: "12px", fontWeight: "bold", marginBottom: "10px", borderBottom: "1px solid #1e293b", paddingBottom: "6px" }}>ELIGIBILITY RATIONALE &amp; MATCH SCORE</div>
+              <div style={{ marginBottom: "8px" }}>
+                <span style={{ background: matchPct >= 80 ? "#166534" : matchPct >= 50 ? "#713f12" : "#7f1d1d", color: badgeFg, fontSize: "11px", fontWeight: "bold", padding: "3px 10px", borderRadius: "12px" }}>{matchPct}% — {catLabel}</span>
+              </div>
+              <div style={{ borderTop: "1px solid #1e293b", paddingTop: "8px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0" }}>
+                  <span style={{ color: "#94a3b8", fontSize: "12px" }}>Inclusion criteria satisfied</span>
+                  <span style={{ color: "#f8fafc", fontSize: "12px", fontWeight: "bold" }}>{checkedInclusionCount} / {criteria.inclusion.length}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderTop: "1px solid #1e293b" }}>
+                  <span style={{ color: "#94a3b8", fontSize: "12px" }}>Exclusion criteria cleared</span>
+                  <span style={{ color: "#f8fafc", fontSize: "12px", fontWeight: "bold" }}>{uncheckedExclusionCount} / {criteria.exclusion.length}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderTop: "1px solid #1e293b" }}>
+                  <span style={{ color: "#94a3b8", fontSize: "12px" }}>Custom lab rules satisfied</span>
+                  <span style={{ color: "#f8fafc", fontSize: "12px", fontWeight: "bold" }}>{satisfiedCustomCount} / {customRules.length}</span>
+                </div>
+              </div>
+              {/* Inclusion checklist in PDF */}
+              {criteria.inclusion.length > 0 && (
+                <div style={{ borderTop: "1px solid #1e293b", paddingTop: "8px", marginTop: "8px" }}>
+                  <div style={{ color: "#22c55e", fontSize: "11px", fontWeight: "bold", marginBottom: "6px" }}>
+                    Core Criteria Checklist — Inclusion ({checkedInclusionCount}/{criteria.inclusion.length})
+                  </div>
+                  {criteria.inclusion.map((item, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: "8px", padding: "4px 0", borderBottom: i < criteria.inclusion.length - 1 ? "1px solid #1e293b" : "none" }}>
+                      <span style={{ color: inclusionMap[i] ? "#22c55e" : "#ef4444", fontSize: "12px", fontWeight: "bold", width: "14px", textAlign: "center", flexShrink: 0 }}>
+                        {inclusionMap[i] ? "✓" : "✗"}
+                      </span>
+                      <span style={{ color: "#f8fafc", fontSize: "10px", lineHeight: "1.4" }}>{item}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer for page 1 */}
+            <div style={{ textAlign: "center", color: "#475569", fontSize: "10px", borderTop: "1px solid #1e293b", paddingTop: "10px", marginTop: "20px" }}>
+              Page 1 of 2 — Generated by Aethel Bio
             </div>
           </div>
+        </div>
 
-          {/* Patient Profile */}
-          <div className="print-card" style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "6px", padding: "14px", marginBottom: "14px" }}>
-            <div style={{ color: "#38bdf8", fontSize: "12px", fontWeight: "bold", marginBottom: "10px", borderBottom: "1px solid #1e293b", paddingBottom: "6px" }}>PATIENT PROFILE SUMMARY</div>
-            <div style={{ display: "flex", gap: "20px" }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ marginBottom: "10px" }}>
-                  <div style={{ color: "#94a3b8", fontSize: "10px" }}>Mutation</div>
-                  <div style={{ color: "#f8fafc", fontSize: "13px", fontWeight: "bold" }}>{params.mutation}</div>
-                </div>
-                <div style={{ marginBottom: "10px" }}>
-                  <div style={{ color: "#94a3b8", fontSize: "10px" }}>eGFR</div>
-                  <div style={{ color: "#f8fafc", fontSize: "13px", fontWeight: "bold" }}>{fmtL(params.egfr, "mL/min")}</div>
-                </div>
-                <div>
-                  <div style={{ color: "#94a3b8", fontSize: "10px" }}>Brain Metastases</div>
-                  <div style={{ color: "#22c55e", fontSize: "13px", fontWeight: "bold" }}>✓ None detected</div>
-                </div>
+        {/* ── Page 2: Outreach Letter with full signature block ── */}
+        <div id="pdf-page-2" style={{ display: "none" }}>
+          <div style={{ background: "#0b1329", color: "#f8fafc", fontFamily: "Arial, Helvetica, sans-serif", padding: "56px", minHeight: "297mm" }}>
+            {/* Letterhead */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "1px solid #1e293b", paddingBottom: "12px", marginBottom: "24px" }}>
+              <div>
+                <div style={{ color: "#38bdf8", fontSize: "22px", fontWeight: "bold" }}>Aethel Bio</div>
+                <div style={{ color: "#38bdf8", fontSize: "14px", fontWeight: "normal" }}>Clinical Referral Summary</div>
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ marginBottom: "10px" }}>
-                  <div style={{ color: "#94a3b8", fontSize: "10px" }}>Disease</div>
-                  <div style={{ color: "#f8fafc", fontSize: "13px", fontWeight: "bold" }}>{params.disease}</div>
-                </div>
-                <div>
-                  <div style={{ color: "#94a3b8", fontSize: "10px" }}>Platelets</div>
-                  <div style={{ color: "#f8fafc", fontSize: "13px", fontWeight: "bold" }}>{fmtL(params.platelets, "K/µL")}</div>
-                </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ color: badgeFg, fontSize: "14px", fontWeight: "bold" }}>{matchPct}% — {catLabel}</div>
+                <div style={{ color: "#94a3b8", fontSize: "11px", marginTop: "4px" }}>{dateStr}</div>
               </div>
             </div>
-          </div>
 
-          {/* Target Trial */}
-          <div className="print-card" style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "6px", padding: "14px", marginBottom: "14px" }}>
-            <div style={{ color: "#38bdf8", fontSize: "12px", fontWeight: "bold", marginBottom: "10px", borderBottom: "1px solid #1e293b", paddingBottom: "6px" }}>TARGET TRIAL</div>
-            <div style={{ marginBottom: "8px" }}>
-              <div style={{ color: "#94a3b8", fontSize: "10px" }}>Title</div>
-              <div style={{ color: "#f8fafc", fontSize: "12px", fontWeight: "bold" }}>{protocol.identificationModule.briefTitle}</div>
-            </div>
-            <div style={{ display: "flex", gap: "20px" }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ marginBottom: "8px" }}>
-                  <div style={{ color: "#94a3b8", fontSize: "10px" }}>NCT ID</div>
-                  <div style={{ color: "#38bdf8", fontSize: "12px", fontWeight: "bold", fontFamily: "Courier, monospace" }}>{protocol.identificationModule.nctId}</div>
-                </div>
-                <div>
-                  <div style={{ color: "#94a3b8", fontSize: "10px" }}>Sponsor</div>
-                  <div style={{ color: "#f8fafc", fontSize: "12px", fontWeight: "bold" }}>{protocol.sponsorCollaboratorsModule?.leadSponsor?.name || "Unknown"}</div>
-                </div>
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ marginBottom: "8px" }}>
-                  <div style={{ color: "#94a3b8", fontSize: "10px" }}>Phase</div>
-                  <div style={{ color: "#f8fafc", fontSize: "12px", fontWeight: "bold" }}>{protocol.designModule?.phases?.length ? protocol.designModule.phases.map((ph) => ph.replace("PHASE", "Phase ")).join("/") : "N/A"}</div>
-                </div>
-                <div>
-                  <div style={{ color: "#94a3b8", fontSize: "10px" }}>Status</div>
-                  <div style={{ color: "#22c55e", fontSize: "12px", fontWeight: "bold" }}>{protocol.statusModule.overallStatus}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Eligibility Rationale */}
-          <div className="print-card" style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "6px", padding: "14px", marginBottom: "14px" }}>
-            <div style={{ color: "#38bdf8", fontSize: "12px", fontWeight: "bold", marginBottom: "10px", borderBottom: "1px solid #1e293b", paddingBottom: "6px" }}>ELIGIBILITY RATIONALE &amp; MATCH SCORE</div>
-            <div style={{ marginBottom: "8px" }}>
-              <span style={{ background: matchPct >= 80 ? "#166534" : matchPct >= 50 ? "#713f12" : "#7f1d1d", color: badgeFg, fontSize: "11px", fontWeight: "bold", padding: "3px 10px", borderRadius: "12px" }}>{matchPct}% — {catLabel}</span>
-            </div>
-            <div style={{ borderTop: "1px solid #1e293b", paddingTop: "8px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0" }}>
-                <span style={{ color: "#94a3b8", fontSize: "12px" }}>Inclusion criteria satisfied</span>
-                <span style={{ color: "#f8fafc", fontSize: "12px", fontWeight: "bold" }}>{checkedInclusionCount} / {criteria.inclusion.length}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderTop: "1px solid #1e293b" }}>
-                <span style={{ color: "#94a3b8", fontSize: "12px" }}>Exclusion criteria cleared</span>
-                <span style={{ color: "#f8fafc", fontSize: "12px", fontWeight: "bold" }}>{uncheckedExclusionCount} / {criteria.exclusion.length}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderTop: "1px solid #1e293b" }}>
-                <span style={{ color: "#94a3b8", fontSize: "12px" }}>Custom lab rules satisfied</span>
-                <span style={{ color: "#f8fafc", fontSize: "12px", fontWeight: "bold" }}>{satisfiedCustomCount} / {customRules.length}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Outreach Draft */}
-          <div className="print-card" style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "6px", padding: "14px", marginBottom: "14px" }}>
-            <div style={{ color: "#38bdf8", fontSize: "12px", fontWeight: "bold", marginBottom: "10px", borderBottom: "1px solid #1e293b", paddingBottom: "6px" }}>PRINCIPAL INVESTIGATOR OUTREACH DRAFT</div>
-            <div style={{ color: "#94a3b8", fontSize: "11px", lineHeight: "1.6", whiteSpace: "pre-wrap" }}>{`Dear Principal Investigator,
+            {/* Outreach Draft Letter */}
+            <div className="print-card" style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "6px", padding: "24px 28px", marginBottom: "14px", minHeight: "180mm" }}>
+              <div style={{ color: "#38bdf8", fontSize: "12px", fontWeight: "bold", marginBottom: "12px", borderBottom: "1px solid #1e293b", paddingBottom: "6px" }}>PRINCIPAL INVESTIGATOR OUTREACH DRAFT</div>
+              <div style={{ color: "#94a3b8", fontSize: "12px", lineHeight: "1.8", whiteSpace: "pre-wrap" }}>{`Dear Principal Investigator,
 
 I am writing to refer a patient for consideration in the ${protocol.identificationModule.briefTitle} (${protocol.identificationModule.nctId}).
 
-The patient presents with ${params.disease} and carries the ${params.mutation} mutation. Key laboratory values — eGFR ${fmtL(params.egfr, "mL/min")}, platelets ${fmtL(params.platelets, "K/µL")} — fall within the study's anticipated parameters.
+The patient presents with ${params.disease} and carries the ${normalizeMutationForOutreach(params.mutation)} mutation. Key laboratory values — eGFR ${fmtL(params.egfr, "mL/min")}, platelets ${fmtL(params.platelets, "K/µL")} — fall within the study's anticipated parameters.
 
 Eligibility assessment yielded a ${matchPct}% match (${catLabel}), with ${checkedInclusionCount} of ${criteria.inclusion.length} inclusion criteria met and ${uncheckedExclusionCount} of ${criteria.exclusion.length} exclusion criteria cleared.
 
 Please find the full patient profile and eligibility checklist attached. I welcome the opportunity to discuss this case further and provide any additional documentation required.
 
 Respectfully,
-Aethel Bio — AI Clinical Trial Matching`}</div>
-          </div>
+Aethel Bio — AI Clinical Trial Matching
 
-          {/* Footer */}
-          <div style={{ textAlign: "center", color: "#475569", fontSize: "10px", borderTop: "1px solid #1e293b", paddingTop: "10px", marginTop: "20px" }}>
-            Generated by Aethel Bio — AI Clinical Trial Matching
+${protocol.identificationModule.nctId}
+${protocol.sponsorCollaboratorsModule?.leadSponsor?.name || ""}
+${protocol.identificationModule.briefTitle}`}</div>
+            </div>
+
+            {/* Footer for page 2 */}
+            <div style={{ textAlign: "center", color: "#475569", fontSize: "10px", borderTop: "1px solid #1e293b", paddingTop: "10px", marginTop: "16px" }}>
+              Page 2 of 2 — Generated by Aethel Bio
+            </div>
           </div>
         </div>
       </div>
@@ -1108,20 +1187,23 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
 
     // Pre-populate custom lab rules from the patient profile
     const { egfr, platelets } = patientProfile.extractedParams;
-    const egfrVal = egfr !== null ? egfr : "N/A";
-    const pltVal = platelets !== null ? platelets : "N/A";
-    const preRules: CustomRule[] = [
-      {
+    const preRules: CustomRule[] = [];
+    if (egfr !== null) {
+      preRules.push({
         id: crypto.randomUUID(),
-        text: `eGFR ≥ 60 mL/min (Patient: ${egfrVal} mL/min)`,
-        satisfied: egfr !== null && egfr >= 60,
-      },
-      {
+        text: `eGFR ≥ 60 mL/min (Patient: ${egfr} mL/min)`,
+        satisfied: egfr >= 60,
+        required: true,
+      });
+    }
+    if (platelets !== null) {
+      preRules.push({
         id: crypto.randomUUID(),
-        text: `Platelets ≥ 100K/µL (Patient: ${pltVal}K/µL)`,
-        satisfied: platelets !== null && platelets >= 100,
-      },
-    ];
+        text: `Platelets ≥ 100 K/µL (Patient: ${platelets} K/µL)`,
+        satisfied: platelets >= 100,
+        required: true,
+      });
+    }
     setCustomRules(preRules);
   }, [patientProfile, criteria.inclusion, criteria.exclusion]);
 
@@ -1135,7 +1217,7 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
   const addCustomRule = (text: string) =>
     setCustomRules((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), text, satisfied: true },
+      { id: crypto.randomUUID(), text, satisfied: true, required: false },
     ]);
 
   const toggleCustom = (id: string) =>
@@ -1146,8 +1228,18 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
   const removeCustom = (id: string) =>
     setCustomRules((prev) => prev.filter((r) => r.id !== id));
 
-  /* ── Calculate score ── */
+  /* ── Calculate hard gate and score ── */
+  const hardGatePassed = useMemo(() => {
+    const totalInclusion = criteria.inclusion.length;
+    const checkedInclusion = criteria.inclusion.filter((_, i) => inclusionMap[i]).length;
+    const inclusionMetRatio = totalInclusion > 0 ? checkedInclusion / totalInclusion : 1;
+    const requiredParamsPass = customRules.filter((r) => r.required).every((r) => r.satisfied);
+    return inclusionMetRatio >= 0.50 && requiredParamsPass;
+  }, [criteria, inclusionMap, customRules]);
+
   const score = useMemo(() => {
+    if (!hardGatePassed) return 0;
+
     const totalInclusion = criteria.inclusion.length;
     const totalExclusion = criteria.exclusion.length;
     const totalCustom = customRules.length;
@@ -1161,9 +1253,19 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
     return Math.round(
       ((checkedInclusion + uncheckedExclusion + satisfiedCustom) / total) * 100
     );
-  }, [criteria, inclusionMap, exclusionMap, customRules]);
+  }, [hardGatePassed, criteria, inclusionMap, exclusionMap, customRules]);
 
-  const cat = getMatchCategory(score);
+  const cat = useMemo(() => {
+    if (!hardGatePassed) {
+      return {
+        label: "Ineligible / Unmet Inclusion Criteria",
+        color: "text-destructive",
+        bg: "bg-destructive-muted",
+        border: "border-destructive/30",
+      };
+    }
+    return getMatchCategory(score);
+  }, [hardGatePassed, score]);
 
   return (
     <>
@@ -1197,7 +1299,7 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
         <div className="flex-1 overflow-y-auto px-5 pb-28 pt-5 space-y-6">
           {/* Match Gauge */}
           <section className="flex flex-col items-center py-4">
-            <MatchGauge score={score} />
+            <MatchGauge score={score} cat={cat} />
             {patientProfile && (
               <button
                 onClick={() => setShowReferral(true)}
@@ -1208,6 +1310,20 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
               </button>
             )}
           </section>
+
+          {/* Hard Gate Warning Banner */}
+          {patientProfile && !hardGatePassed && (
+            <div className="rounded-xl border border-destructive/30 bg-destructive-muted p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-destructive">
+                <AlertTriangle className="h-4 w-4" />
+                Core Eligibility Criteria Not Met
+              </div>
+              <p className="mt-1 text-xs text-text-secondary">
+                Patient does not meet the baseline inclusion requirements — match score capped at 0%.
+                Review inclusion criteria below.
+              </p>
+            </div>
+          )}
 
           {/* Patient Profile (when loaded from report) */}
           {patientProfile && (

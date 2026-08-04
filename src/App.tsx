@@ -105,75 +105,45 @@ const QUICK_LOOKUPS = [
 
 /* ── Helpers ─────────────────────────────────────────── */
 
-interface SanitizedTerms {
-  cleanGene: string;
-  cleanDisease: string;
+interface CleanTerms {
+  biomarker: string;
+  disease: string;
 }
 
 /**
- * Extract a clean gene symbol and simplify the disease string
- * for optimal ClinicalTrials.gov API queries.
- *
- * Gene examples:
- *   "BRCA1 c.5266dupC (p.Gln1756Profs*74)"       → "BRCA1"
- *   "KRAS G12C mutation"                           → "KRAS"
- *   "EGFR T790M"                                   → "EGFR"
- *
- * Disease examples:
- *   "Invasive Breast Carcinoma, Ductal Type"       → "Breast Cancer"
- *   "Metastatic Triple-Negative Breast Cancer"     → "Breast Cancer"
- *   "Non-Small Cell Lung Cancer"                   → "Non-Small Cell Lung Cancer" (preserved)
- *   "Colorectal Carcinoma"                         → "Colorectal Cancer"
+ * Simple string normaliser. Extracts the primary gene symbol
+ * and maps the disease to a clean search term.
  */
-function sanitizeSearchTerms(disease: string, mutation: string): SanitizedTerms {
-  // ── Gene extraction ──
-  // Match the leading gene symbol (letters + optional digits/hyphen suffix)
-  let cleanGene = mutation.trim();
-  const geneMatch = cleanGene.match(/^([A-Za-z][A-Za-z0-9]{0,9}(?:-[A-Za-z0-9]+)?)(?:\s|$)/);
-  if (geneMatch) {
-    cleanGene = geneMatch[1].toUpperCase();
+function getCleanTerms(biomarker: string, condition: string): CleanTerms {
+  // Biomarker: match known genes, otherwise first word
+  let cleanBio = biomarker.trim();
+  const knownGenes = ["BRCA1", "PIK3CA", "EGFR", "KRAS", "TP53", "ALK", "ROS1", "BRAF", "HER2"];
+  const found = knownGenes.find((g) => cleanBio.toUpperCase().includes(g));
+  if (found) {
+    cleanBio = found;
+  } else {
+    cleanBio = cleanBio.split(/\s+/)[0] || "";
   }
 
-  // ── Disease simplification ──
-  let cleanDisease = disease.trim();
+  // Disease: map to standard short form or fall back to "Solid Tumor"
+  let cleanDisease = condition.trim();
+  if (/\bbreast\b/i.test(cleanDisease)) cleanDisease = "Breast Cancer";
+  else if (/\blung\b/i.test(cleanDisease)) cleanDisease = "Lung Cancer";
+  else if (/\bprostate\b/i.test(cleanDisease)) cleanDisease = "Prostate Cancer";
+  else if (/\bcolorect/i.test(cleanDisease)) cleanDisease = "Colorectal Cancer";
+  else if (/\bpancrea/i.test(cleanDisease)) cleanDisease = "Pancreatic Cancer";
+  else if (/\bovarian?/i.test(cleanDisease)) cleanDisease = "Ovarian Cancer";
+  else if (/\bendometri/i.test(cleanDisease)) cleanDisease = "Endometrial Cancer";
+  else if (/\bliver\b|hepatocellular/i.test(cleanDisease)) cleanDisease = "Liver Cancer";
+  else if (/\bgastric\b|stomach\b/i.test(cleanDisease)) cleanDisease = "Gastric Cancer";
+  else if (/\bhead\s+and\s+neck/i.test(cleanDisease)) cleanDisease = "Head and Neck Cancer";
+  else if (/\bmelanoma/i.test(cleanDisease)) cleanDisease = "Melanoma";
+  else if (/\bglioblastoma|glioma/i.test(cleanDisease)) cleanDisease = "Glioblastoma";
+  else if (/\bbladder\b/i.test(cleanDisease)) cleanDisease = "Bladder Cancer";
+  else if (/\brenal\b/i.test(cleanDisease)) cleanDisease = "Renal Cancer";
+  else if (cleanDisease) cleanDisease = "Solid Tumor";
 
-  if (cleanDisease) {
-    // 1. Replace "Carcinoma" → "Cancer" unless already "Cancer"
-    cleanDisease = cleanDisease.replace(/\bCarcinoma\b/gi, "Cancer");
-
-    // 2. Strip leading modifiers that are too granular for trial search
-    //    e.g. "Invasive Breast Cancer" → "Breast Cancer"
-    //         "Metastatic Triple-Negative Breast Cancer" → "Breast Cancer"
-    //    but keep well-known subtypes like "Non-Small Cell Lung Cancer",
-    //    "Triple-Negative Breast Cancer", "Acute Myeloid Leukemia"
-    const knownSubtypes = [
-      /\bnon-?small\s+cell\s+/i,
-      /\bsmall\s+cell\s+/i,
-      /\btriple-?negative\s+/i,
-      /\bHer2[+]?\s+(positive\s+)?/i,
-      /\bHR[+]?\s+(positive\s+)?/i,
-      /\bacute\s+(myeloid|lymphocytic|lymphoblastic)\s+/i,
-      /\bchronic\s+(myeloid|lymphocytic|lymphoblastic)\s+/i,
-    ];
-
-    const hasKnownSubtype = knownSubtypes.some((re) => re.test(cleanDisease));
-    if (!hasKnownSubtype) {
-      // Strip leading adjectives like "Invasive", "Metastatic", "Advanced",
-      // "Recurrent", "Refractory", "Locally Advanced", "Unresectable"
-      cleanDisease = cleanDisease
-        .replace(
-          /^(Metastatic|Invasive|Advanced|Recurrent|Refractory|Locally\s+Advanced|Unresectable)\s+/i,
-          "",
-        )
-        .trim();
-    }
-
-    // 3. Remove trailing detail after a comma or parenthesis
-    //    e.g. "Breast Cancer, Ductal Type" → "Breast Cancer"
-    cleanDisease = cleanDisease.replace(/[,\(].*$/, "").trim();
-  }
-
-  return { cleanGene, cleanDisease };
+  return { biomarker: cleanBio, disease: cleanDisease };
 }
 
 /**
@@ -380,114 +350,35 @@ export default function App() {
     setError(null);
     setSearched(true);
 
-    // Sanitize raw terms into clean gene symbol and simplified disease name
-    const { cleanGene, cleanDisease } = sanitizeSearchTerms(cond, bio);
-
-    // ── Fetch helper ──
-    async function fetchQuery(
-      params: URLSearchParams,
-    ): Promise<{ studies: StudyProtocol[]; cards: TrialCardData[] } | null> {
-      const url = `https://clinicaltrials.gov/api/v2/studies?${params.toString()}`;
-      try {
-        const res = await fetch(url);
-        if (!res.ok) return null;
-        const data: StudiesResponse = await res.json();
-        if (!data.studies || data.studies.length === 0) return null;
-        return { studies: data.studies, cards: data.studies.map(mapStudyToCard) };
-      } catch {
-        return null;
-      }
-    }
-
-    // ── Dedup merge ──
-    function mergeResults(
-      ...results: ({ studies: StudyProtocol[]; cards: TrialCardData[] } | null)[]
-    ): { studies: StudyProtocol[]; cards: TrialCardData[] } {
-      const seen = new Set<string>();
-      const studies: StudyProtocol[] = [];
-      const cards: TrialCardData[] = [];
-      for (const r of results) {
-        if (!r) continue;
-        for (let i = 0; i < r.studies.length; i++) {
-          const nctId = r.studies[i].protocolSection.identificationModule.nctId;
-          if (!seen.has(nctId)) {
-            seen.add(nctId);
-            studies.push(r.studies[i]);
-            cards.push(r.cards[i]);
-          }
-        }
-      }
-      return { studies, cards };
-    }
-
-    // ── Base query builder ──
-    const baseParams = () => {
-      const p = new URLSearchParams();
-      p.set("filter.overallStatus", "RECRUITING");
-      p.set("pageSize", "20");
-      p.set("format", "json");
-      return p;
-    };
-
-    // ── Multi‑tier search ──
-    // Collect results from broader tiers when few matches exist,
-    // then merge and deduplicate to maximise relevant results.
-    let allStudies: StudyProtocol[] = [];
-    let allCards: TrialCardData[] = [];
+    // Clean the input terms using the simple string normaliser
+    const { biomarker: cleanBio, disease: cleanCond } = getCleanTerms(bio, cond);
 
     try {
-      // Tier 1 — cleanDisease + cleanGene (most specific)
-      if (cleanDisease && cleanGene) {
-        const p = baseParams();
-        p.set("query.cond", cleanDisease);
-        p.set("query.term", cleanGene);
-        const result = await fetchQuery(p);
-        if (result) {
-          allStudies = result.studies;
-          allCards = result.cards;
-        }
+      // Tier 1 — disease + gene (most specific)
+      let url = `https://clinicaltrials.gov/api/v2/studies?query.cond=${encodeURIComponent(cleanCond)}&query.term=${encodeURIComponent(cleanBio)}&filter.overallStatus=RECRUITING&pageSize=15`;
+      let res = await fetch(url);
+      let data: StudiesResponse = await res.json();
+      let studies = data.studies || [];
+
+      // Tier 2 — disease only (fallback when Tier 1 returns 0)
+      if (studies.length === 0 && cleanCond) {
+        url = `https://clinicaltrials.gov/api/v2/studies?query.cond=${encodeURIComponent(cleanCond)}&filter.overallStatus=RECRUITING&pageSize=15`;
+        res = await fetch(url);
+        data = await res.json();
+        studies = data.studies || [];
       }
 
-      // Tier 2 — cleanDisease alone (broaden when < 5 results)
-      if (allCards.length < 5 && cleanDisease) {
-        const p = baseParams();
-        p.set("query.cond", cleanDisease);
-        const result = await fetchQuery(p);
-        const merged = mergeResults(
-          { studies: allStudies, cards: allCards },
-          result,
-        );
-        allStudies = merged.studies;
-        allCards = merged.cards;
+      // Tier 3 — gene only (fallback when Tier 2 returns 0)
+      if (studies.length === 0 && cleanBio) {
+        url = `https://clinicaltrials.gov/api/v2/studies?query.term=${encodeURIComponent(cleanBio)}&filter.overallStatus=RECRUITING&pageSize=15`;
+        res = await fetch(url);
+        data = await res.json();
+        studies = data.studies || [];
       }
 
-      // Tier 3 — cleanGene alone (broaden when still < 5 results)
-      if (allCards.length < 5 && cleanGene) {
-        const p = baseParams();
-        p.set("query.term", cleanGene);
-        const result = await fetchQuery(p);
-        const merged = mergeResults(
-          { studies: allStudies, cards: allCards },
-          result,
-        );
-        allStudies = merged.studies;
-        allCards = merged.cards;
-      }
-
-      // Gene-only fallback (when only a gene was entered, no disease)
-      if (allCards.length === 0 && cleanGene && !cleanDisease) {
-        const p = baseParams();
-        p.set("query.term", cleanGene);
-        const result = await fetchQuery(p);
-        if (result) {
-          allStudies = result.studies;
-          allCards = result.cards;
-        }
-      }
-
-      // Return top 10 most relevant
-      setFullStudies(allStudies.slice(0, 10));
-      setTrials(allCards.slice(0, 10));
+      // Map and set results
+      setFullStudies(studies.slice(0, 15));
+      setTrials(studies.map(mapStudyToCard).slice(0, 15));
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to fetch trials.";
