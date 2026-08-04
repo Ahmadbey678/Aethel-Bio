@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Search, Dna, FlaskConical, ArrowRight, AlertCircle, Sparkles, Upload, FileText, RotateCcw, Loader2 } from "lucide-react";
+import { Search, Dna, FlaskConical, ArrowRight, AlertCircle, Sparkles, Upload, FileText, RotateCcw, Loader2, MapPin } from "lucide-react";
 import TrialMatchSimulator from "./TrialMatchSimulator";
 import { extractFileText } from "./extractReport";
 
@@ -168,8 +168,13 @@ function formatLocation(loc?: {
   country?: string;
 }): string {
   if (!loc) return "Location not specified";
-  const parts = [loc.facility, loc.city, loc.state, loc.country].filter(Boolean);
-  return parts.join(", ") || "Location not specified";
+  // Format as "Primary Site: City, State/Country"
+  const parts: string[] = [];
+  if (loc.city) parts.push(loc.city);
+  if (loc.state) parts.push(loc.state);
+  else if (loc.country) parts.push(loc.country);
+  const locationStr = parts.length > 0 ? `Primary Site: ${parts.join(", ")}` : "Location not specified";
+  return locationStr;
 }
 
 function mapStudyToCard(study: StudyProtocol): TrialCardData {
@@ -300,10 +305,7 @@ function TrialCard({
       </div>
 
       <div className="mb-4 flex items-center gap-1.5 text-xs text-text-muted">
-        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
-        </svg>
+        <MapPin className="h-3.5 w-3.5 shrink-0" />
         {trial.primaryLocation}
       </div>
 
@@ -354,8 +356,20 @@ export default function App() {
     const { biomarker: cleanBio, disease: cleanCond } = getCleanTerms(bio, cond);
 
     try {
+      // Detect TNBC + BRCA1 for specialised query
+      const isTNBCBRCA1 =
+        cleanCond.toLowerCase().includes("triple") &&
+        cleanCond.toLowerCase().includes("breast") &&
+        (cleanBio === "BRCA1" || cleanCond.toLowerCase().includes("brca1"));
+
+      // Build condition query — include both TNBC and broader Breast Cancer for BRCA1/TNBC
+      let condParam = cleanCond;
+      if (isTNBCBRCA1) {
+        condParam = `"Triple-Negative Breast Cancer" OR "Breast Cancer"`;
+      }
+
       // Tier 1 — disease + gene (most specific)
-      let url = `https://clinicaltrials.gov/api/v2/studies?query.cond=${encodeURIComponent(cleanCond)}&query.term=${encodeURIComponent(cleanBio)}&filter.overallStatus=RECRUITING&pageSize=15`;
+      let url = `https://clinicaltrials.gov/api/v2/studies?query.cond=${encodeURIComponent(condParam)}&query.term=${encodeURIComponent(cleanBio)}&filter.overallStatus=RECRUITING&pageSize=15`;
       let res = await fetch(url);
       let data: StudiesResponse = await res.json();
       let studies = data.studies || [];
