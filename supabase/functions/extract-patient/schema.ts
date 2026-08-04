@@ -59,6 +59,23 @@ export const extractionSchema = {
       type: "string",
       description: "1-2 sentence summary of key findings",
     },
+    pik3ca: {
+      type: "string",
+      description: "PIK3CA mutation status e.g. 'H1047R', 'E545K', 'wild-type', or 'not detected'",
+    },
+    tp53: {
+      type: "string",
+      description: "TP53 mutation status e.g. 'R175H', 'Y220C', 'wild-type', or 'not detected'",
+    },
+    tmb: {
+      type: ["string", "null"],
+      description: "Tumor Mutational Burden e.g. '10 mutations/Mb', 'TMB-High', 'TMB-Low', or null if not reported",
+    },
+    priorTreatments: {
+      type: "array",
+      items: { type: "string" },
+      description: "Prior treatments mentioned in the report e.g. 'Olaparib', 'Platinum-based chemotherapy', 'PARP inhibitor'",
+    },
   },
   required: [
     "mutation",
@@ -75,6 +92,10 @@ export const extractionSchema = {
     "ast",
     "additionalMutations",
     "reportSummary",
+    "pik3ca",
+    "tp53",
+    "tmb",
+    "priorTreatments",
   ],
   additionalProperties: false,
 };

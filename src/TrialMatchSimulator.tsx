@@ -72,6 +72,10 @@ interface ExtractedParams {
   ast: number | null;
   additionalMutations: string[];
   reportSummary: string;
+  pik3ca: string;
+  tp53: string;
+  tmb: string | null;
+  priorTreatments: string[];
 }
 
 interface PatientProfile {
@@ -939,7 +943,8 @@ function ReferralSummaryModal({
           y,
         );
         for (let i = 0; i < criteria.inclusion.length; i++) {
-          if (y > 275) {
+          // Early page break: if the current item would push y close to the 260mm safe zone, wrap early
+          if (y > 260) {
             pdf.addPage();
             fillBg();
             y = M + 5;
@@ -1166,7 +1171,13 @@ function ReferralSummaryModal({
                   Eligible Candidate — Baseline inclusion threshold met
                 </div>
               )}
-              {cat.label.includes("Ineligible") && (
+              {cat.label === "Ineligible / Organ System Mismatch" && (
+                <div className="mb-2 flex items-center gap-2 rounded-lg bg-destructive-muted px-3 py-1.5 text-xs font-medium text-destructive">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  Organ System Mismatch — This trial targets a different organ system from the patient's disease — score capped at 0%
+                </div>
+              )}
+              {cat.label === "Ineligible / Unmet Inclusion Criteria" && (
                 <div className="mb-2 flex items-center gap-2 rounded-lg bg-destructive-muted px-3 py-1.5 text-xs font-medium text-destructive">
                   <AlertTriangle className="h-3.5 w-3.5" />
                   Ineligible / Unmet Inclusion Criteria — score capped at 0%
@@ -1328,6 +1339,32 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
   const [customRules, setCustomRules] = useState<CustomRule[]>([]);
   const [showReferral, setShowReferral] = useState(false);
 
+  /* ── Detect organ system mismatch ── */
+  const isOrganMismatch = useMemo(() => {
+    if (!patientProfile) return false;
+    const studyConditions = p.conditionsModule?.conditions || [];
+    const patientDisease = patientProfile.extractedParams.disease.toLowerCase();
+    const organKeywords = ["breast", "lung", "prostate", "colorect", "pancrea", "ovari", "endometri",
+      "liver", "hepatocell", "gastric", "stomach", "melanoma", "glioblastoma", "glioma",
+      "bladder", "renal", "head", "neck", "sarcoma", "leukemia", "lymphoma", "myeloma",
+      "ovarian", "kidney", "colon", "rectal", "esophageal", "cervical", "thyroid"];
+    const patientOrgan = organKeywords.find((k) => patientDisease.includes(k));
+
+    if (patientOrgan && studyConditions.length > 0) {
+      const hasMatchingOrgan = studyConditions.some((c) => {
+        const cl = c.toLowerCase();
+        return cl.includes(patientOrgan) ||
+               (patientOrgan === "breast" && cl.includes("breast")) ||
+               (patientOrgan === "lung" && cl.includes("lung")) ||
+               (patientOrgan === "colorect" && (cl.includes("colon") || cl.includes("rectal") || cl.includes("colorect")));
+      });
+      if (!hasMatchingOrgan) {
+        return true; // hard fail — disease organ mismatch
+      }
+    }
+    return false;
+  }, [patientProfile, p.conditionsModule]);
+
   /* ── Auto-match when patient profile is provided ── */
   useEffect(() => {
     if (!patientProfile) return;
@@ -1385,36 +1422,15 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
 
   /* ── Calculate hard gate and score ── */
   const hardGatePassed = useMemo(() => {
-    // Disease organ mismatch — if patient's cancer type doesn't match trial conditions, hard fail
-    if (patientProfile) {
-      const studyConditions = p.conditionsModule?.conditions || [];
-      const patientDisease = patientProfile.extractedParams.disease.toLowerCase();
-      const organKeywords = ["breast", "lung", "prostate", "colorect", "pancrea", "ovari", "endometri",
-        "liver", "hepatocell", "gastric", "stomach", "melanoma", "glioblastoma", "glioma",
-        "bladder", "renal", "head", "neck", "sarcoma", "leukemia", "lymphoma", "myeloma",
-        "ovarian", "kidney", "colon", "rectal", "esophageal", "cervical", "thyroid"];
-      const patientOrgan = organKeywords.find((k) => patientDisease.includes(k));
-
-      if (patientOrgan && studyConditions.length > 0) {
-        const hasMatchingOrgan = studyConditions.some((c) => {
-          const cl = c.toLowerCase();
-          return cl.includes(patientOrgan) ||
-                 (patientOrgan === "breast" && cl.includes("breast")) ||
-                 (patientOrgan === "lung" && cl.includes("lung")) ||
-                 (patientOrgan === "colorect" && (cl.includes("colon") || cl.includes("rectal") || cl.includes("colorect")));
-        });
-        if (!hasMatchingOrgan) {
-          return false; // hard fail — disease organ mismatch
-        }
-      }
-    }
+    // Organ system mismatch — handled by isOrganMismatch (which controls cat label)
+    if (isOrganMismatch) return false;
 
     // Mandatory exclusion violation — if any exclusion criterion applies to the patient, hard fail
     const hasActiveExclusion = criteria.exclusion.some((_, i) => exclusionMap[i] === true);
     if (hasActiveExclusion) return false;
 
     return true;
-  }, [criteria, exclusionMap, patientProfile, p.conditionsModule]);
+  }, [isOrganMismatch, criteria, exclusionMap]);
 
   const score = useMemo(() => {
     if (!hardGatePassed) return 0;
@@ -1429,6 +1445,14 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
   }, [hardGatePassed, criteria.inclusion, inclusionMap]);
 
   const cat = useMemo(() => {
+    if (isOrganMismatch) {
+      return {
+        label: "Ineligible / Organ System Mismatch",
+        color: "text-destructive",
+        bg: "bg-destructive-muted",
+        border: "border-destructive/30",
+      };
+    }
     if (!hardGatePassed) {
       return {
         label: "Ineligible / Unmet Inclusion Criteria",
@@ -1438,7 +1462,7 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
       };
     }
     return getMatchCategory(score);
-  }, [hardGatePassed, score]);
+  }, [isOrganMismatch, hardGatePassed, score]);
 
   return (
     <>
@@ -1484,8 +1508,21 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
             )}
           </section>
 
-          {/* Hard Gate Warning Banner */}
-          {patientProfile && !hardGatePassed && (
+          {/* Hard Gate Warning Banner — Organ Mismatch */}
+          {patientProfile && isOrganMismatch && (
+            <div className="rounded-xl border border-destructive/30 bg-destructive-muted p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-destructive">
+                <AlertTriangle className="h-4 w-4" />
+                Organ System Mismatch
+              </div>
+              <p className="mt-1 text-xs text-text-secondary">
+                This trial targets a different organ system than the patient's disease ({patientProfile.extractedParams.disease}). Match score forced to 0%.
+              </p>
+            </div>
+          )}
+
+          {/* Hard Gate Warning Banner — Other Failure */}
+          {patientProfile && !isOrganMismatch && !hardGatePassed && (
             <div className="rounded-xl border border-destructive/30 bg-destructive-muted p-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-destructive">
                 <AlertTriangle className="h-4 w-4" />
