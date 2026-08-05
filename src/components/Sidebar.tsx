@@ -1,5 +1,16 @@
 import type { ComponentType } from "react";
-import { Home, Search, FileText, Target, Users, Settings as SettingsIcon, Dna, X } from "lucide-react";
+import {
+  Dna,
+  FileText,
+  Home,
+  Loader2,
+  LogOut,
+  Search,
+  Settings as SettingsIcon,
+  Target,
+  Users,
+  X,
+} from "lucide-react";
 
 export type ViewKey = "home" | "queries" | "pathology" | "matches" | "unmatched" | "settings";
 
@@ -27,13 +38,22 @@ export default function Sidebar({
   matchCount,
   mobileOpen,
   onCloseMobile,
+  userEmail,
+  signOutPending,
+  signOutError,
+  onSignOut,
 }: {
   active: ViewKey;
   onNavigate: (view: ViewKey) => void;
   matchCount?: number;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  userEmail?: string | null;
+  signOutPending?: boolean;
+  signOutError?: string | null;
+  onSignOut?: () => void;
 }) {
+  const initials = userEmail ? userEmail.split("@")[0].slice(0, 2).toUpperCase() : "AB";
   const content = (
     <>
       <div className="flex items-center justify-between gap-2.5 border-b border-border-subtle px-5 py-5">
@@ -81,8 +101,34 @@ export default function Sidebar({
         ))}
       </nav>
 
-      <div className="border-t border-border-subtle px-5 py-4 text-[10px] text-text-muted">
-        Connected to ClinicalTrials.gov
+      <div className="border-t border-border-subtle px-3 py-3">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-muted font-heading text-xs font-semibold text-primary">
+            {initials}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-medium text-text-primary">{userEmail ?? "Signed in"}</p>
+            <p className="truncate text-[10px] text-text-muted">Precision Oncology Unit</p>
+          </div>
+          <button
+            onClick={onSignOut}
+            disabled={signOutPending}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-muted transition-colors duration-150 hover:bg-destructive-muted hover:text-destructive disabled:opacity-50 cursor-pointer"
+            aria-label="Sign out"
+            title="Sign out"
+          >
+            {signOutPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <LogOut aria-hidden="true" className="h-4 w-4" />
+            )}
+          </button>
+        </div>
+        {signOutError && (
+          <p role="alert" className="mt-2 text-[10px] text-destructive">
+            {signOutError}
+          </p>
+        )}
       </div>
     </>
   );

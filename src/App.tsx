@@ -1,9 +1,13 @@
 import { useState, useCallback, useEffect } from "react";
-import { Menu, Sparkles } from "lucide-react";
+import { Loader2, Menu, Sparkles } from "lucide-react";
+import type { Session } from "@supabase/supabase-js";
 import TrialMatchSimulator from "./TrialMatchSimulator";
 import { extractFileText } from "./extractReport";
 import { scoreTrial } from "./trialScoring";
 import { logUnmatchedCohort, UNMATCHED_MATCH_THRESHOLD } from "./cohortRegistry";
+import { supabase, onAuthStateChange } from "./utils/supabaseClient";
+import AuthModal from "./components/AuthModal";
+import LockScreen from "./components/LockScreen";
 import Sidebar, { VIEW_TITLES, type ViewKey } from "./components/Sidebar";
 import HomeView from "./views/HomeView";
 import MatchesView from "./views/MatchesView";
@@ -116,6 +120,12 @@ function mapStudyToCard(study: StudyProtocol): TrialCardData {
 export default function App() {
   const [activeView, setActiveView] = useState<ViewKey>("home");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  const [session, setSession] = useState<Session | null>(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [signOutPending, setSignOutPending] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
 
   const [biomarker, setBiomarker] = useState("");
   const [condition, setCondition] = useState("");
@@ -361,7 +371,92 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, [selectedStudy]);
 
-  return (
+  /* ── App-wide auth gate ────────────────────────────────────────────────
+     Resolve the session once on mount (the cached session is replayed
+     synchronously by `onAuthStateChange`), then keep the whole workspace in
+     sync with sign-in / sign-out from anywhere (e.g. the AuthModal). When the
+     session goes null (sign-out, expiry), the workspace is replaced by the
+     LockScreen. */
+  useEffect(() => {
+    if (!supabase) {
+      /* Dev mode without Supabase: skip the gate so the demo stays usable. */
+      setSessionChecked(true);
+      return;
+    }
+
+    let active = true;
+    const client = supabase;
+
+    const resolve = async () => {
+      try {
+        const {
+          data: { session: initial },
+        } = await client.auth.getSession();
+        if (!active) return;
+        setSession(initial);
+        setSessionChecked(true);
+      } catch (err) {
+        console.error("Supabase Auth Error:", err);
+        if (!active) return;
+        setSession(null);
+        setSessionChecked(true);
+      }
+    };
+    void resolve();
+
+    const unsubscribe = onAuthStateChange((next) => {
+      if (!active) return;
+      setSession(next);
+      if (!next) {
+        /* Signed out — reset the workspace so the next user starts clean. */
+        setActiveView("home");
+        setMobileNavOpen(false);
+        setBiomarker("");
+        setCondition("");
+        setStage(null);
+        setPatientProfile(null);
+        setUploadedFileName(null);
+        setIsValidMedicalDoc(null);
+        setTrials([]);
+        setFullStudies([]);
+        setSelectedStudy(null);
+        setError(null);
+        setSearched(false);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  /* ── Sign out ───────────────────────────────────────────────────────── */
+  const handleSignOut = useCallback(async () => {
+    if (!supabase) {
+      /* Dev mode without Supabase — nothing to sign out of. */
+      setSessionChecked(true);
+      setSession(null);
+      return;
+    }
+    setSignOutPending(true);
+    setSignOutError(null);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        setSignOutError("We couldn't sign you out. Please try again.");
+        console.error("Sign out error:", error.message);
+        return;
+      }
+      /* `onAuthStateChange` flips the session to null → LockScreen. */
+    } catch {
+      setSignOutError("We couldn't sign you out. Please try again.");
+    } finally {
+      setSignOutPending(false);
+    }
+  }, []);
+
+  const workspace = (
     <div className="flex h-screen overflow-hidden bg-surface">
       <Sidebar
         active={activeView}
@@ -369,6 +464,10 @@ export default function App() {
         matchCount={trials.length}
         mobileOpen={mobileNavOpen}
         onCloseMobile={() => setMobileNavOpen(false)}
+        userEmail={session?.user?.email}
+        signOutPending={signOutPending}
+        signOutError={signOutError}
+        onSignOut={() => void handleSignOut()}
       />
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -439,5 +538,49 @@ export default function App() {
         />
       )}
     </div>
+  );
+
+  /* ── Session gate ──────────────────────────────────────────────────────
+     While the session is being resolved, show a brief loader. When signed
+     out (or Supabase unconfigured → dev mode), show the LockScreen so the
+     user can sign back in. The AuthModal mounts unconditionally so it can
+     always be opened. */
+  if (!sessionChecked) {
+    return (
+      <>
+        <AuthModal
+          isOpen={isAuthModalOpen}
+          onClose={() => setIsAuthModalOpen(false)}
+          onSuccess={() => {
+            setSessionChecked(true);
+          }}
+        />
+        <div className="flex h-screen items-center justify-center bg-surface">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </>
+    );
+  }
+
+  if (!session) {
+    return (
+      <>
+        <AuthModal
+          isOpen={isAuthModalOpen}
+          onClose={() => setIsAuthModalOpen(false)}
+        />
+        <LockScreen onSignIn={() => setIsAuthModalOpen(true)} />
+      </>
+    );
+  }
+
+  return (
+    <>
+      {workspace}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+      />
+    </>
   );
 }
