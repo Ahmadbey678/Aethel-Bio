@@ -330,7 +330,7 @@ export default function UnmatchedRegistryView() {
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-text-muted">
-          Patients whose best-matching trial scored below 40% — grouped by disease + biomarker to surface unmet
+          Patients whose best-matching trial scored below 50% — grouped by disease + biomarker to surface unmet
           demand for new trials.
         </p>
         <div className="flex items-center gap-2">
@@ -391,7 +391,7 @@ export default function UnmatchedRegistryView() {
           </div>
           <h3 className="font-heading text-lg font-medium text-text-primary">No unmatched patients logged</h3>
           <p className="mt-2 max-w-md text-sm text-text-secondary">
-            When a search with an uploaded patient report finds no trial scoring above 40%, that patient is logged
+            When a search with an uploaded patient report finds no trial scoring above 50%, that patient is logged
             here automatically — or add a record manually.
           </p>
           <button

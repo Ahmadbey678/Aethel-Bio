@@ -14,7 +14,7 @@
 
 import { supabase, isPermissionDenied } from "./utils/supabaseClient";
 
-export const UNMATCHED_MATCH_THRESHOLD = 40;
+export const UNMATCHED_MATCH_THRESHOLD = 50;
 
 export interface UnmatchedCohortInput {
   disease: string;
