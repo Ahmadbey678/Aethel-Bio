@@ -62,7 +62,8 @@ function toPatientRecord(row: UnmatchedPatientRow): PatientRecord {
     stage: row.stage,
     egfr: row.lab_metrics?.egfr ?? null,
     platelets: row.lab_metrics?.platelets ?? null,
-    noBrainMets: row.lab_metrics?.noBrainMets ?? null,
+    noBrainMets:
+      (row.lab_metrics?.no_brain_mets as boolean | undefined) ?? row.lab_metrics?.noBrainMets ?? null,
     bestMatchScore: row.best_match_score,
     trialsConsidered: row.trials_considered,
     createdByEmail: row.created_by_email,
@@ -299,10 +300,11 @@ export default function UnmatchedRegistryView() {
           biomarker: input.biomarker,
           disease: input.disease,
           stage: input.stage,
-          lab_metrics: { egfr, platelets, noBrainMets: input.noBrainMets },
+          lab_metrics: { egfr, platelets, no_brain_mets: input.noBrainMets },
           best_match_score: bestMatchScore,
           trials_considered: trialsConsidered,
           created_by_email: createdByEmail,
+          logged_by: session?.user?.email ?? "Manual Clinical Entry",
         })
         .select(
           "id, biomarker, disease, stage, lab_metrics, best_match_score, trials_considered, created_by_email, logged_by, created_at, updated_at",

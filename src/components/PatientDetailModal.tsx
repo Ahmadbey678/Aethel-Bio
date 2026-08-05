@@ -210,7 +210,19 @@ export default function PatientDetailModal({
 
   const pct = asPercent(record.bestMatchScore);
   const diagnostics = useMemo(() => buildMatchDiagnostic(record), [record]);
-  const labEntries = useMemo(() => Object.entries(record.labMetrics ?? {}), [record.labMetrics]);
+  /** Merge the record's normalized top-level lab columns (egfr, platelets,
+      noBrainMets) with the nested `lab_metrics` JSONB object so every stored
+      value renders exactly once. Nested keys win; the top-level fields backfill
+      legacy rows that only carry the flat columns. */
+  const labEntries = useMemo(() => {
+    const nested = record.labMetrics ?? {};
+    const merged: Record<string, unknown> = { ...nested };
+    if (merged.egfr === undefined && record.egfr !== null) merged.egfr = record.egfr;
+    if (merged.platelets === undefined && record.platelets !== null) merged.platelets = record.platelets;
+    const hasBrainMets = merged.no_brain_mets !== undefined || merged.noBrainMets !== undefined;
+    if (!hasBrainMets && record.noBrainMets !== null) merged.no_brain_mets = record.noBrainMets;
+    return Object.entries(merged);
+  }, [record]);
   const searchUrl = useMemo(
     () =>
       `https://clinicaltrials.gov/search?cond=${encodeURIComponent(record.disease)}&term=${encodeURIComponent(
@@ -300,7 +312,7 @@ export default function PatientDetailModal({
       `Secondary biomarker: Not logged`,
       `Best match score:    ${pct === null ? "—" : `${Math.round(pct)}%`}`,
       `Trials evaluated:    ${record.trialsConsidered ?? "—"}`,
-      `Logged by:           ${record.loggedBy ?? record.createdByEmail ?? "—"}`,
+      `Logged by:           ${record.loggedBy || "Clinical AI System"}`,
       `Logged on:           ${formatDate(record.createdAt)}`,
       "",
       "LAB METRICS",
@@ -444,7 +456,7 @@ export default function PatientDetailModal({
                   <CopyRecordId id={record.id} />
                 </dd>
               </div>
-              <KV label="Logged by" value={record.loggedBy ?? record.createdByEmail ?? "—"} />
+              <KV label="Logged by" value={record.loggedBy || "Clinical AI System"} />
               <KV label="Logged on" value={formatDate(record.createdAt)} />
             </dl>
           </section>
@@ -481,7 +493,7 @@ export default function PatientDetailModal({
                     key={key}
                     label={formatLabKey(key)}
                     value={formatLabValue(key, value)}
-                    muted={isMissingLabValue(value)}
+                    active={!isMissingLabValue(value)}
                     warn={labValueWarn(key, value)}
                   />
                 ))}
@@ -490,7 +502,7 @@ export default function PatientDetailModal({
               <p className="rounded-xl border border-dashed border-border-subtle bg-surface px-3.5 py-4 text-xs leading-relaxed text-text-muted">
                 No lab metrics are logged for this patient yet. Values added to the record&apos;s{" "}
                 <code className="rounded bg-surface-hover px-1 py-0.5 font-mono text-[10px]">lab_metrics</code> field
-                will appear here as chips.
+                will appear here as badges.
               </p>
             )}
           </section>
@@ -698,22 +710,33 @@ function KV({ label, value, title }: { label: string; value: ReactNode; title?: 
   );
 }
 
+/** A lab metric cell: the value renders as a styled badge when logged, or as
+    muted "Not logged" text when the record has no value for the field. */
 function MetricTile({
   label,
   value,
-  muted = false,
+  active = false,
   warn = false,
 }: {
   label: string;
   value: string;
-  muted?: boolean;
+  active?: boolean;
   warn?: boolean;
 }) {
-  const tone = warn ? "text-warning" : muted ? "text-text-muted" : "text-text-primary";
   return (
     <div className="rounded-lg border border-border-subtle bg-surface px-3 py-2.5">
       <p className="text-[10px] font-medium uppercase tracking-wide text-text-muted">{label}</p>
-      <p className={`mt-1 truncate text-sm font-medium tabular-nums ${tone}`}>{value}</p>
+      {active ? (
+        <span
+          className={`mt-1 inline-flex max-w-full items-center rounded-md border px-2 py-0.5 text-xs font-medium tabular-nums ${
+            warn ? "border-warning/30 bg-warning/10 text-warning" : "border-primary/20 bg-primary/10 text-primary"
+          }`}
+        >
+          <span className="truncate">{value}</span>
+        </span>
+      ) : (
+        <p className="mt-1 text-sm text-text-muted">Not logged</p>
+      )}
     </div>
   );
 }
