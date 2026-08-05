@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   X,
   LogIn,
@@ -26,13 +27,26 @@ const TABS: AuthTab[] = ["signin", "signup"];
  * keeping its hook order stable, so focus/escape plumbing never breaks across
  * open/close transitions.
  *
+ * The modal content is rendered through a React portal directly into
+ * `document.body`, escaping any `overflow: hidden`, `position: relative`, or
+ * `z-index` stacking-context constraints in the host view.
+ *
  * On a successful sign-in (or a sign-up when email confirmation is disabled)
- * the modal closes; the app's auth-state listeners (e.g. UnmatchedRegistryView)
- * pick up the new session and re-fetch automatically. When email confirmation
- * is required (the hosted Supabase default), the modal shows a "check your
- * inbox" success state with a resend option instead.
+ * the modal calls `onSuccess()` (so the host view can refresh its data) and
+ * then closes; the app's auth-state listeners (e.g. UnmatchedRegistryView)
+ * also pick up the new session and re-fetch automatically. When email
+ * confirmation is required (the hosted Supabase default), the modal shows a
+ * "check your inbox" success state with a resend option instead.
  */
-export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+export default function AuthModal({
+  isOpen,
+  onClose,
+  onSuccess,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess?: () => void;
+}) {
   const [tab, setTab] = useState<AuthTab>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -189,7 +203,9 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
         return;
       }
 
-      /* Success — auth listeners react to the new session and re-fetch. */
+      /* Success — notify the host so it can refresh data, then close.
+         Auth listeners also react to the new session and re-fetch. */
+      onSuccess?.();
       onClose();
       return;
     }
@@ -223,6 +239,7 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
 
     if (data.session) {
       /* Email confirmation is disabled for this project — session is live. */
+      onSuccess?.();
       onClose();
     } else {
       setConfirmationPending(true);
@@ -254,11 +271,13 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
     }`;
 
   /* Controlled visibility — every hook above always runs; only the DOM output
-     is gated, so React's hook order stays stable across open/close. */
+     is gated, so React's hook order stays stable across open/close. When open,
+     the modal is portaled straight into `document.body` so no parent
+     `overflow`, `position`, or stacking context can hide or clip it. */
   if (!isOpen) return null;
 
-  return (
-    <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+  return createPortal(
+    <div className="pointer-events-auto fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
       <div
         ref={modalRef}
         role="dialog"
@@ -465,6 +484,7 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

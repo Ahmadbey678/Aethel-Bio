@@ -488,9 +488,25 @@ export default function UnmatchedRegistryView() {
   /* ── Root render: the auth modal mounts unconditionally at the very root,
      outside every conditional wrapper, so it is guaranteed visible whenever
      `isAuthModalOpen` is true (signed-out, dev-mode, and admin states). ── */
+  const handleAuthSuccess = useCallback(() => {
+    /* Refresh the registry the moment a sign-in succeeds. The auth-state
+       listener also reacts, but this explicit reload guarantees the
+       `unmatched_patients` data is fetched immediately with the fresh JWT —
+       RLS only allows it for users whose `app_metadata.role` is `admin`. */
+    if (!supabase) return;
+    void supabase.auth.getSession().then(({ data }) => {
+      const next = data.session;
+      if (isAdminSession(next)) void loadRecords();
+    });
+  }, [loadRecords]);
+
   return (
     <>
-      <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onSuccess={handleAuthSuccess}
+      />
       {content}
     </>
   );
