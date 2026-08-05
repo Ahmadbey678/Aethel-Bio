@@ -73,7 +73,7 @@ export default function UnmatchedRegistryView() {
   const [deleteTarget, setDeleteTarget] = useState<PatientRecord | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   const isAdmin = isAdminSession(session);
   const isSignedIn = session !== null;
@@ -277,7 +277,7 @@ export default function UnmatchedRegistryView() {
           The Unmatched Patient Registry is restricted to authorized clinical staff. Sign in to continue.
         </p>
         <button
-          onClick={() => setShowAuthModal(true)}
+          onClick={() => setIsAuthModalOpen(true)}
           className="mt-5 inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-glow transition-all duration-150 hover:bg-primary-hover active:scale-[0.97] cursor-pointer"
         >
           <LogIn className="h-4 w-4" />
@@ -460,7 +460,7 @@ export default function UnmatchedRegistryView() {
       )}
 
       {/* ── Auth modal (signed-out users) ── */}
-      {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
+      {isAuthModalOpen && <AuthModal onClose={() => setIsAuthModalOpen(false)} />}
     </div>
   );
 }
