@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { Loader2, Menu, Sparkles } from "lucide-react";
+import { Loader2, Lock, Menu, Sparkles, X } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import TrialMatchSimulator from "./TrialMatchSimulator";
 import { extractFileText } from "./extractReport";
@@ -124,6 +124,8 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isGuest, setIsGuest] = useState(false);
+  const [guestLockedToast, setGuestLockedToast] = useState<string | null>(null);
   const [signOutPending, setSignOutPending] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
 
@@ -407,6 +409,11 @@ export default function App() {
     const unsubscribe = onAuthStateChange((next) => {
       if (!active) return;
       setSession(next);
+      if (next) {
+        /* A real session supersedes guest (demo) mode. */
+        setIsGuest(false);
+        setGuestLockedToast(null);
+      }
       if (!next) {
         /* Signed out — reset the workspace so the next user starts clean. */
         setActiveView("home");
@@ -430,6 +437,38 @@ export default function App() {
       unsubscribe();
     };
   }, []);
+
+  /* ── Guest mode (demo access) ──────────────────────────────────────────
+     Entering guest mode replaces the LockScreen with the workspace. The
+     session stays null, so the sidebar renders the Guest User (Demo Mode)
+     badge and restricts navigation to Home + Matches. */
+  const handleContinueAsGuest = useCallback(() => {
+    setIsGuest(true);
+    setActiveView("home");
+    setMobileNavOpen(false);
+  }, []);
+
+  /* ── Exit guest mode → back to the LockScreen ── */
+  const handleExitGuest = useCallback(() => {
+    setIsGuest(false);
+    setActiveView("home");
+    setMobileNavOpen(false);
+    setGuestLockedToast(null);
+  }, []);
+
+  /* ── Locked-view toast: shown when a guest clicks a restricted tab ── */
+  const handleGuestLockedClick = useCallback(() => {
+    setGuestLockedToast(
+      "Authentication Required — Sign in to access patient registries and administrative settings.",
+    );
+  }, []);
+
+  /* Auto-dismiss the locked toast after a few seconds. */
+  useEffect(() => {
+    if (!guestLockedToast) return;
+    const t = setTimeout(() => setGuestLockedToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [guestLockedToast]);
 
   /* ── Sign out ───────────────────────────────────────────────────────── */
   const handleSignOut = useCallback(async () => {
@@ -467,7 +506,9 @@ export default function App() {
         userEmail={session?.user?.email}
         signOutPending={signOutPending}
         signOutError={signOutError}
-        onSignOut={() => void handleSignOut()}
+        onSignOut={() => void (isGuest ? handleExitGuest() : handleSignOut())}
+        isGuest={isGuest}
+        onGuestLockedClick={handleGuestLockedClick}
       />
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -522,10 +563,10 @@ export default function App() {
               onSelectTrial={handleSelectTrial}
             />
           )}
-          {activeView === "queries" && <QueriesView history={queryHistory} onRerun={handleRerunQuery} />}
-          {activeView === "pathology" && <PathologyView history={pathologyHistory} />}
-          {activeView === "unmatched" && <UnmatchedRegistryView />}
-          {activeView === "settings" && <SettingsView />}
+          {!isGuest && activeView === "queries" && <QueriesView history={queryHistory} onRerun={handleRerunQuery} />}
+          {!isGuest && activeView === "pathology" && <PathologyView history={pathologyHistory} />}
+          {!isGuest && activeView === "unmatched" && <UnmatchedRegistryView />}
+          {!isGuest && activeView === "settings" && <SettingsView />}
         </main>
       </div>
 
@@ -536,6 +577,32 @@ export default function App() {
           patientProfile={patientProfile ?? undefined}
           onClose={() => setSelectedStudy(null)}
         />
+      )}
+
+      {/* ── Guest locked-view toast ── */}
+      {guestLockedToast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 left-1/2 z-[60] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 animate-fade-in-up"
+        >
+          <div className="flex items-start gap-3 rounded-xl border border-warning/30 bg-surface-raised px-4 py-3.5 shadow-card">
+            <Lock className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Authentication Required</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
+                Sign in to access patient registries and administrative settings.
+              </p>
+            </div>
+            <button
+              onClick={() => setGuestLockedToast(null)}
+              className="shrink-0 rounded-md p-1 text-text-muted transition-colors duration-150 hover:bg-surface-hover hover:text-text-primary cursor-pointer"
+              aria-label="Dismiss notification"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -554,6 +621,10 @@ export default function App() {
           onSuccess={() => {
             setSessionChecked(true);
           }}
+          onContinueAsGuest={() => {
+            setSessionChecked(true);
+            handleContinueAsGuest();
+          }}
         />
         <div className="flex h-screen items-center justify-center bg-surface">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -562,12 +633,13 @@ export default function App() {
     );
   }
 
-  if (!session) {
+  if (!session && !isGuest) {
     return (
       <>
         <AuthModal
           isOpen={isAuthModalOpen}
           onClose={() => setIsAuthModalOpen(false)}
+          onContinueAsGuest={handleContinueAsGuest}
         />
         <LockScreen onSignIn={() => setIsAuthModalOpen(true)} />
       </>
@@ -580,6 +652,7 @@ export default function App() {
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
+        onContinueAsGuest={handleContinueAsGuest}
       />
     </>
   );

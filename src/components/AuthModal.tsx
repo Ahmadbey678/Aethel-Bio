@@ -42,10 +42,12 @@ export default function AuthModal({
   isOpen,
   onClose,
   onSuccess,
+  onContinueAsGuest,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  onContinueAsGuest?: () => void;
 }) {
   const [tab, setTab] = useState<AuthTab>("signin");
   const [email, setEmail] = useState("");
@@ -404,83 +406,105 @@ export default function AuthModal({
               </div>
             </div>
           ) : (
-            /* ── Sign In / Sign Up form ── */
-            <form onSubmit={handleSubmit} noValidate>
-              <div className="mb-4">
-                <label htmlFor="auth-email" className="mb-1.5 block text-sm font-medium text-text-secondary">
-                  Email address
-                </label>
-                <input
-                  ref={emailRef}
-                  id="auth-email"
-                  type="email"
-                  autoComplete="email"
-                  inputMode="email"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    if (error) setError(null);
-                  }}
-                  placeholder="you@hospital.org"
-                  aria-invalid={error ? true : undefined}
-                  className={inputClass}
-                />
-              </div>
-
-              <div className="mb-5">
-                <label htmlFor="auth-password" className="mb-1.5 block text-sm font-medium text-text-secondary">
-                  Password
-                </label>
-                <div className="relative">
+            <>
+              {/* ── Sign In / Sign Up form ── */}
+              <form onSubmit={handleSubmit} noValidate>
+                <div className="mb-4">
+                  <label htmlFor="auth-email" className="mb-1.5 block text-sm font-medium text-text-secondary">
+                    Email address
+                  </label>
                   <input
-                    id="auth-password"
-                    type={showPassword ? "text" : "password"}
-                    autoComplete={tab === "signin" ? "current-password" : "new-password"}
-                    value={password}
+                    ref={emailRef}
+                    id="auth-email"
+                    type="email"
+                    autoComplete="email"
+                    inputMode="email"
+                    value={email}
                     onChange={(e) => {
-                      setPassword(e.target.value);
+                      setEmail(e.target.value);
                       if (error) setError(null);
                     }}
-                    placeholder="••••••••"
+                    placeholder="you@hospital.org"
                     aria-invalid={error ? true : undefined}
-                    className={`${inputClass} pr-10`}
+                    className={inputClass}
                   />
+                </div>
+
+                <div className="mb-5">
+                  <label htmlFor="auth-password" className="mb-1.5 block text-sm font-medium text-text-secondary">
+                    Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="auth-password"
+                      type={showPassword ? "text" : "password"}
+                      autoComplete={tab === "signin" ? "current-password" : "new-password"}
+                      value={password}
+                      onChange={(e) => {
+                        setPassword(e.target.value);
+                        if (error) setError(null);
+                      }}
+                      placeholder="••••••••"
+                      aria-invalid={error ? true : undefined}
+                      className={`${inputClass} pr-10`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-text-muted transition-colors duration-150 hover:bg-surface-hover hover:text-text-primary cursor-pointer"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      aria-pressed={showPassword}
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  {tab === "signup" && <p className="mt-1.5 text-xs text-text-muted">At least 6 characters.</p>}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-glow transition-all duration-150 hover:bg-primary-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {tab === "signin" ? "Signing in…" : "Creating account…"}
+                    </>
+                  ) : tab === "signin" ? (
+                    <>
+                      <LogIn className="h-4 w-4" />
+                      Sign In
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="h-4 w-4" />
+                      Create Account
+                    </>
+                  )}
+                </button>
+              </form>
+
+              {/* ── Guest access — preview the workspace without an account ── */}
+              {onContinueAsGuest && (
+                <div className="mt-5 border-t border-border-subtle pt-4">
                   <button
                     type="button"
-                    onClick={() => setShowPassword((v) => !v)}
-                    className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-text-muted transition-colors duration-150 hover:bg-surface-hover hover:text-text-primary cursor-pointer"
-                    aria-label={showPassword ? "Hide password" : "Show password"}
-                    aria-pressed={showPassword}
+                    onClick={() => {
+                      onClose();
+                      onContinueAsGuest();
+                    }}
+                    disabled={submitting}
+                    className="w-full cursor-pointer rounded text-center text-sm font-medium text-slate-400 transition-colors duration-150 hover:text-white disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    Continue as Guest →
                   </button>
+                  <p className="mt-1.5 text-center text-[11px] leading-relaxed text-text-muted">
+                    Preview trial matching without signing in. Patient registries &amp; settings stay locked.
+                  </p>
                 </div>
-                {tab === "signup" && <p className="mt-1.5 text-xs text-text-muted">At least 6 characters.</p>}
-              </div>
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-glow transition-all duration-150 hover:bg-primary-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    {tab === "signin" ? "Signing in…" : "Creating account…"}
-                  </>
-                ) : tab === "signin" ? (
-                  <>
-                    <LogIn className="h-4 w-4" />
-                    Sign In
-                  </>
-                ) : (
-                  <>
-                    <UserPlus className="h-4 w-4" />
-                    Create Account
-                  </>
-                )}
-              </button>
-            </form>
+              )}
+            </>
           )}
         </div>
       </div>
