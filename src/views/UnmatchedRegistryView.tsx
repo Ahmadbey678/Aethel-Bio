@@ -15,14 +15,18 @@ import {
   List,
   Target,
   TrendingUp,
+  Info,
+  ChevronRight,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, isAdminSession, isPermissionDenied, onAuthStateChange } from "../utils/supabaseClient";
 import type { UnmatchedPatientRow } from "../cohortRegistry";
 import AuthModal from "../components/AuthModal";
+import PatientDetailModal, { patientCode } from "../components/PatientDetailModal";
+import { ScoreBadge, ScoreBar, SCORE_TONE_STYLES, asPercent, clampPct, formatScore, scoreTone } from "../components/ScoreDisplay";
 
 /** Normalised view of a record, converting snake_case DB columns to camelCase. */
-interface PatientRecord {
+export interface PatientRecord {
   id: string;
   biomarker: string;
   disease: string;
@@ -42,57 +46,6 @@ type ViewMode = "detailed" | "grouped";
 
 function formatTimestamp(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-/** Stored match scores are decimal fractions (0–1); guard against any legacy 0–100 values. */
-function asPercent(value: number | null): number | null {
-  if (value === null || Number.isNaN(value)) return null;
-  return value > 1 ? value : value * 100;
-}
-
-function formatScore(value: number | null): string {
-  const pct = asPercent(value);
-  return pct === null ? "—" : `${Math.round(pct)}%`;
-}
-
-/** Clamp a match score to a 0–100 percentage for progress-bar widths. */
-function clampPct(value: number | null): number {
-  const pct = asPercent(value);
-  if (pct === null) return 0;
-  return Math.min(100, Math.max(0, pct));
-}
-
-type ScoreTone = "destructive" | "warning" | "success";
-
-const SCORE_TONE_STYLES: Record<ScoreTone, { bar: string; text: string }> = {
-  destructive: { bar: "bg-destructive", text: "text-destructive" },
-  warning: { bar: "bg-warning", text: "text-warning" },
-  success: { bar: "bg-success", text: "text-success" },
-};
-
-/** Red < 25%, amber 25–49%, green ≥ 50% — low trial fit is the story here. */
-function scoreTone(pct: number): ScoreTone {
-  if (pct < 25) return "destructive";
-  if (pct < 50) return "warning";
-  return "success";
-}
-
-/** Compact color-coded progress bar for a match score (tone via `scoreTone`). */
-function ScoreBar({ value }: { value: number | null }) {
-  const pct = clampPct(value);
-  const tone = scoreTone(pct);
-  return (
-    <span
-      role="img"
-      aria-label={`${formatScore(value)} trial fit`}
-      className="inline-block h-1.5 w-16 overflow-hidden rounded-full bg-surface-hover"
-    >
-      <span
-        className={`block h-full rounded-full ${SCORE_TONE_STYLES[tone].bar} transition-all duration-300`}
-        style={{ width: `${pct}%` }}
-      />
-    </span>
-  );
 }
 
 function formatNumber(value: number | null): string {
@@ -167,6 +120,7 @@ export default function UnmatchedRegistryView() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("detailed");
+  const [selectedRecord, setSelectedRecord] = useState<PatientRecord | null>(null);
 
   const isAdmin = isAdminSession(session);
   const isSignedIn = session !== null;
@@ -273,6 +227,7 @@ export default function UnmatchedRegistryView() {
         setLoadState("ready");
         setShowAddForm(false);
         setDeleteTarget(null);
+        setSelectedRecord(null);
       }
     });
 
@@ -357,6 +312,25 @@ export default function UnmatchedRegistryView() {
       return true;
     },
     [session],
+  );
+
+  /** Refresh the registry after an in-drawer mutation (e.g. a manual match
+      override) and re-sync the drawer with the freshly saved record. */
+  const handleRecordUpdated = useCallback(
+    async (recordId: string) => {
+      await loadRecords();
+      if (!supabase) return;
+      const { data } = await supabase!
+        .from("unmatched_patients")
+        .select(
+          "id, biomarker, disease, stage, lab_metrics, best_match_score, trials_considered, created_by_email, created_at, updated_at",
+        )
+        .eq("id", recordId)
+        .returns<UnmatchedPatientRow[]>()
+        .single();
+      if (data) setSelectedRecord(toPatientRecord(data));
+    },
+    [loadRecords],
   );
 
   /* ── Render: config / session / access gates ────────────────────────── */
@@ -576,11 +550,11 @@ export default function UnmatchedRegistryView() {
                       <th scope="col" className="px-4 py-3 font-semibold">
                         Stage
                       </th>
-                      <th scope="col" className="px-4 py-3 font-semibold">
+                      <th scope="col" className="px-4 py-3 text-right font-semibold">
                         Best match
                       </th>
                       <th scope="col" className="px-4 py-3 text-right font-semibold">
-                        Trials
+                        <TrialsEvaluatedHeader />
                       </th>
                       <th scope="col" className="px-4 py-3 font-semibold">
                         Last seen
@@ -594,16 +568,27 @@ export default function UnmatchedRegistryView() {
                     {records.map((record) => (
                       <tr
                         key={record.id}
-                        className="border-b border-border-subtle/60 transition-colors last:border-b-0 hover:bg-surface-hover/40"
+                        onClick={() => setSelectedRecord(record)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setSelectedRecord(record);
+                          }
+                        }}
+                        tabIndex={0}
+                        aria-label={`View patient details for ${patientCode(record.id)} — ${record.biomarker} + ${record.disease}`}
+                        className="cursor-pointer border-b border-border-subtle/60 transition-colors last:border-b-0 hover:bg-surface-hover/60 focus-visible:bg-surface-hover/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
                       >
-                        <td className="px-4 py-3 font-medium text-text-primary">{record.biomarker}</td>
+                        <td className="px-4 py-3">
+                          <span className="inline-flex items-center rounded-md border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                            {record.biomarker}
+                          </span>
+                        </td>
                         <td className="px-4 py-3 text-text-secondary">{record.disease}</td>
                         <td className="px-4 py-3 text-text-secondary">{record.stage ?? "—"}</td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center justify-end gap-2.5">
-                            <span className="text-xs font-medium text-text-secondary tabular-nums">
-                              {formatScore(record.bestMatchScore)}
-                            </span>
+                          <div className="flex flex-col items-end gap-1.5">
+                            <ScoreBadge value={record.bestMatchScore} />
                             <ScoreBar value={record.bestMatchScore} />
                           </div>
                         </td>
@@ -612,14 +597,20 @@ export default function UnmatchedRegistryView() {
                         </td>
                         <td className="px-4 py-3 text-text-secondary">{formatTimestamp(record.createdAt)}</td>
                         <td className="px-4 py-3 text-right">
-                          <button
-                            onClick={() => setDeleteTarget(record)}
-                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-text-muted transition-all duration-150 hover:bg-destructive-muted hover:text-destructive cursor-pointer"
-                            aria-label={`Delete ${record.biomarker} + ${record.disease} record`}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Delete
-                          </button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <ChevronRight className="h-3.5 w-3.5 text-text-muted" aria-hidden="true" />
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteTarget(record);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-text-muted transition-all duration-150 hover:bg-destructive-muted hover:text-destructive cursor-pointer"
+                              aria-label={`Delete ${record.biomarker} + ${record.disease} record`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -648,7 +639,10 @@ export default function UnmatchedRegistryView() {
                       </span>
                     </div>
                     <div className="mb-3 flex items-center justify-between gap-3">
-                      <span className={`text-xs font-semibold ${styles.text}`}>Avg {formatScore(cohort.avgScore)}</span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-[11px] text-text-muted">Avg</span>
+                        <ScoreBadge value={cohort.avgScore} />
+                      </span>
                       <span className={`h-1.5 w-24 overflow-hidden rounded-full bg-surface-hover`}>
                         <span
                           className={`block h-full rounded-full ${styles.bar} transition-all duration-300`}
@@ -676,6 +670,14 @@ export default function UnmatchedRegistryView() {
             if (!deletingId) setDeleteTarget(null);
           }}
           onConfirm={handleDelete}
+        />
+      )}
+
+      {selectedRecord && (
+        <PatientDetailModal
+          record={selectedRecord}
+          onClose={() => setSelectedRecord(null)}
+          onRecordUpdated={handleRecordUpdated}
         />
       )}
 
@@ -1095,5 +1097,30 @@ function SegmentControl<T extends string>({
         );
       })}
     </div>
+  );
+}
+
+/* ── Column header with helper tooltip ───────────────────────────────── */
+
+function TrialsEvaluatedHeader() {
+  const tooltipId = "trials-evaluated-tooltip";
+  return (
+    <span className="group relative inline-flex items-center justify-end gap-1">
+      <span
+        tabIndex={0}
+        aria-describedby={tooltipId}
+        className="cursor-help rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      >
+        Trials evaluated
+      </span>
+      <Info className="h-3 w-3 shrink-0 text-text-muted" aria-hidden="true" />
+      <span
+        id={tooltipId}
+        role="tooltip"
+        className="pointer-events-none absolute right-0 top-full z-20 mt-2 w-64 rounded-lg border border-border-subtle bg-surface-hover px-3 py-2 text-left text-[11px] font-normal normal-case tracking-normal text-text-secondary shadow-card opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        Number of ClinicalTrials.gov protocols checked against this patient&apos;s markers.
+      </span>
+    </span>
   );
 }
