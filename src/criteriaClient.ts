@@ -3,7 +3,7 @@
  * Caches parsed results per NCT ID to avoid re-parsing the same trial.
  */
 
-import type { StudyProtocol } from "./App";
+import type { StudyProtocol } from "./types";
 
 const SUPABASE_URL = "https://cioaszuvlpzbraavdlri.supabase.co";
 

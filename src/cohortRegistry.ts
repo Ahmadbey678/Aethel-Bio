@@ -1,13 +1,18 @@
 /**
- * Unmatched Patient Cohort Registry — "Orphan Cohort Engine".
+ * Unmatched Patient Registry — "Orphan Cohort Engine".
  *
  * When a search's best-scoring trial falls below the match threshold, the
- * (de-identified) patient record is logged to the `unmatched_cohorts`
- * Supabase table so demand for a disease/biomarker combination with no
- * active recruiting trial can be tracked and aggregated.
+ * (de-identified) patient record is logged to the `unmatched_patients`
+ * Supabase table so demand for a disease/biomarker combination with no active
+ * recruiting trial can be tracked.
+ *
+ * Security: `unmatched_patients` is protected by Row Level Security. Every
+ * operation requires an authenticated session whose JWT `app_metadata` role is
+ * `admin`. Non-admin sessions are denied by the database itself (HTTP 403 /
+ * RLS violation) — the client never bypasses that check.
  */
 
-import { supabase } from "./utils/supabaseClient";
+import { supabase, isPermissionDenied } from "./utils/supabaseClient";
 
 export const UNMATCHED_MATCH_THRESHOLD = 40;
 
@@ -24,94 +29,61 @@ export interface UnmatchedCohortInput {
   trialsConsidered: number;
 }
 
-interface UnmatchedCohortRow {
+/** Row shape of `unmatched_patients` as returned by Supabase. */
+export interface UnmatchedPatientRow {
   id: string;
-  disease: string;
   biomarker: string;
+  disease: string;
   stage: string | null;
-  lab_metrics: Record<string, unknown> | null;
+  lab_metrics: {
+    egfr?: number | null;
+    platelets?: number | null;
+    noBrainMets?: boolean;
+  } | null;
   best_match_score: number | null;
   trials_considered: number | null;
+  created_by: string | null;
+  created_by_email: string | null;
   created_at: string;
-}
-
-export interface AggregatedCohort {
-  key: string;
-  disease: string;
-  biomarker: string;
-  patientCount: number;
-  avgBestScore: number;
-  stages: string[];
-  lastSeen: string;
+  updated_at: string;
 }
 
 /**
- * Insert one anonymized patient record into `unmatched_cohorts`. No-ops (with
- * a console warning) if Supabase isn't configured — never throws, so a
- * logging failure can't break the search flow itself.
+ * Insert one anonymized patient record into `unmatched_patients`. No-ops (with
+ * a console warning) if Supabase isn't configured — never throws, so a logging
+ * failure can't break the search flow itself.
+ *
+ * Only admin sessions pass the INSERT policy; for everyone else the insert is
+ * rejected by RLS and logged as a warning (expected behaviour).
  */
 export async function logUnmatchedCohort(input: UnmatchedCohortInput): Promise<void> {
   if (!supabase) {
-    console.warn("Supabase not configured — skipping unmatched cohort log.", input);
+    console.warn("Supabase not configured — skipping unmatched patient log.", input);
     return;
   }
-  const { error } = await supabase.from("unmatched_cohorts").insert({
-    disease: input.disease,
+
+  const { data: sessionData } = await supabase.auth.getSession();
+  const user = sessionData.session?.user ?? null;
+
+  const { error } = await supabase.from("unmatched_patients").insert({
     biomarker: input.biomarker,
+    disease: input.disease,
     stage: input.stage ?? null,
     lab_metrics: input.labMetrics,
     best_match_score: input.bestMatchScore,
     trials_considered: input.trialsConsidered,
-  });
-  if (error) {
-    console.error("Failed to log unmatched cohort:", error.message);
-  }
-}
-
-/**
- * Fetch every logged record and aggregate client-side by disease+biomarker
- * into cohort-demand cards, sorted by patient count (highest demand first).
- */
-export async function fetchUnmatchedCohorts(): Promise<AggregatedCohort[]> {
-  if (!supabase) return [];
-
-  const { data, error } = await supabase
-    .from("unmatched_cohorts")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .returns<UnmatchedCohortRow[]>();
-
-  if (error) {
-    console.error("Failed to fetch unmatched cohorts:", error.message);
-    throw new Error(
-      error.code === "PGRST205" || error.message.includes("Could not find the table")
-        ? "The unmatched_cohorts table doesn't exist yet — run the setup SQL in the Supabase SQL Editor."
-        : `Failed to load the Unmatched Registry: ${error.message}`,
-    );
-  }
-
-  const groups = new Map<string, UnmatchedCohortRow[]>();
-  for (const row of data ?? []) {
-    const key = `${row.disease.trim().toLowerCase()}|${row.biomarker.trim().toLowerCase()}`;
-    const group = groups.get(key);
-    if (group) group.push(row);
-    else groups.set(key, [row]);
-  }
-
-  const aggregated: AggregatedCohort[] = Array.from(groups.entries()).map(([key, rows]) => {
-    const scores = rows.map((r) => r.best_match_score ?? 0);
-    const avgBestScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
-    const stages = Array.from(new Set(rows.map((r) => r.stage).filter((s): s is string => !!s)));
-    return {
-      key,
-      disease: rows[0].disease,
-      biomarker: rows[0].biomarker,
-      patientCount: rows.length,
-      avgBestScore,
-      stages,
-      lastSeen: rows[0].created_at,
-    };
+    created_by: user?.id ?? null,
+    created_by_email: user?.email ?? null,
   });
 
-  return aggregated.sort((a, b) => b.patientCount - a.patientCount);
+  if (error) {
+    if (isPermissionDenied(error)) {
+      console.warn(
+        "Unmatched patient log skipped — INSERT requires an admin session (RLS denied this request).",
+        error.message,
+      );
+    } else {
+      console.error("Failed to log unmatched patient:", error.message);
+    }
+  }
 }
