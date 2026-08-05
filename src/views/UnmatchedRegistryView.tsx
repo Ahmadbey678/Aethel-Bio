@@ -38,7 +38,7 @@ function formatTimestamp(iso: string): string {
 }
 
 function formatScore(value: number | null): string {
-  return value === null ? "—" : `${value}%`;
+  return value === null ? "—" : `${Math.round(value * 100)}%`;
 }
 
 function formatNumber(value: number | null): string {

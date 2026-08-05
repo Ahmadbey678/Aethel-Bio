@@ -110,20 +110,20 @@ export default function Sidebar({
             <p className="truncate text-xs font-medium text-text-primary">{userEmail ?? "Signed in"}</p>
             <p className="truncate text-[10px] text-text-muted">Precision Oncology Unit</p>
           </div>
-          <button
-            onClick={onSignOut}
-            disabled={signOutPending}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-muted transition-colors duration-150 hover:bg-destructive-muted hover:text-destructive disabled:opacity-50 cursor-pointer"
-            aria-label="Sign out"
-            title="Sign out"
-          >
-            {signOutPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <LogOut aria-hidden="true" className="h-4 w-4" />
-            )}
-          </button>
         </div>
+        <button
+          onClick={onSignOut}
+          disabled={signOutPending}
+          className="mt-2 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm font-medium text-red-400 transition-all duration-150 hover:bg-red-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label="Sign out"
+        >
+          {signOutPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <LogOut aria-hidden="true" className="h-4 w-4" />
+          )}
+          <span>{signOutPending ? "Signing out…" : "Sign Out"}</span>
+        </button>
         {signOutError && (
           <p role="alert" className="mt-2 text-[10px] text-destructive">
             {signOutError}
