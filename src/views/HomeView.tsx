@@ -9,6 +9,8 @@ import {
   UploadCloud,
   FlaskConical,
   Beaker,
+  AlertTriangle,
+  X,
 } from "lucide-react";
 import type { PatientProfile } from "../types";
 
@@ -37,6 +39,8 @@ export default function HomeView({
   onSearch,
   onReset,
   loading,
+  error,
+  onDismissError,
 }: {
   biomarker: string;
   onBiomarkerChange: (v: string) => void;
@@ -53,6 +57,8 @@ export default function HomeView({
   onSearch: () => void;
   onReset: () => void;
   loading: boolean;
+  error: string | null;
+  onDismissError: () => void;
 }) {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -82,7 +88,10 @@ export default function HomeView({
                 type="text"
                 placeholder='e.g., "BRCA1", "EGFR T790M", "KRAS G12C"'
                 value={biomarker}
-                onChange={(e) => onBiomarkerChange(e.target.value)}
+                onChange={(e) => {
+                  onBiomarkerChange(e.target.value);
+                  if (error) onDismissError();
+                }}
                 onKeyDown={handleKeyDown}
                 className="w-full rounded-xl border border-border-subtle bg-surface py-3 pl-10 pr-4 text-sm text-text-primary placeholder:text-text-muted/60 transition-colors duration-150 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
               />
@@ -100,7 +109,10 @@ export default function HomeView({
                 type="text"
                 placeholder='e.g., "Triple-Negative Breast Cancer", "Lung Cancer"'
                 value={condition}
-                onChange={(e) => onConditionChange(e.target.value)}
+                onChange={(e) => {
+                  onConditionChange(e.target.value);
+                  if (error) onDismissError();
+                }}
                 onKeyDown={handleKeyDown}
                 className="w-full rounded-xl border border-border-subtle bg-surface py-3 pl-10 pr-4 text-sm text-text-primary placeholder:text-text-muted/60 transition-colors duration-150 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
               />
@@ -262,6 +274,24 @@ export default function HomeView({
           </div>
         </section>
       </div>
+
+      {/* ── Inline error banner (e.g. empty search) ── */}
+      {error && (
+        <div
+          role="alert"
+          className="mt-6 flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive-muted px-4 py-3 text-sm text-destructive animate-fade-in-up"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p className="flex-1 leading-snug">{error}</p>
+          <button
+            onClick={onDismissError}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-destructive/70 transition-colors duration-150 hover:bg-destructive/15 hover:text-destructive cursor-pointer"
+            aria-label="Dismiss error"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* ── Bottom Action Bar ── */}
       <div className="mt-6 flex items-center gap-3">

@@ -14,6 +14,7 @@ import {
 import type { Session } from "@supabase/supabase-js";
 import { supabase, isAdminSession, isPermissionDenied } from "../utils/supabaseClient";
 import type { UnmatchedPatientRow } from "../cohortRegistry";
+import SignInModal from "../components/SignInModal";
 
 /** Normalised view of a record, converting snake_case DB columns to camelCase. */
 interface PatientRecord {
@@ -72,6 +73,7 @@ export default function UnmatchedRegistryView() {
   const [deleteTarget, setDeleteTarget] = useState<PatientRecord | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showSignIn, setShowSignIn] = useState(false);
 
   const isAdmin = isAdminSession(session);
   const isSignedIn = session !== null;
@@ -270,6 +272,13 @@ export default function UnmatchedRegistryView() {
         <p className="mt-2 text-sm text-text-secondary">
           The Unmatched Patient Registry is restricted to authorized clinical staff. Sign in to continue.
         </p>
+        <button
+          onClick={() => setShowSignIn(true)}
+          className="mt-5 inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-glow transition-all duration-150 hover:bg-primary-hover active:scale-[0.97] cursor-pointer"
+        >
+          <LogIn className="h-4 w-4" />
+          Sign In to Access
+        </button>
       </div>
     );
   }
@@ -445,6 +454,9 @@ export default function UnmatchedRegistryView() {
           onConfirm={handleDelete}
         />
       )}
+
+      {/* ── Sign-in modal (signed-out users) ── */}
+      {showSignIn && <SignInModal onClose={() => setShowSignIn(false)} />}
     </div>
   );
 }

@@ -137,7 +137,7 @@ export default function App() {
   const fetchTrials = useCallback(
     async (bio: string, cond: string, stageArg: string | null) => {
       if (!bio.trim() && !cond.trim()) {
-        setError("Please enter a biomarker or condition to search.");
+        setError("Please upload a patient report or enter pathology details before searching for trial matches.");
         return;
       }
       setLoading(true);
@@ -409,6 +409,8 @@ export default function App() {
               onSearch={handleSearch}
               onReset={handleReset}
               loading={loading}
+              error={error}
+              onDismissError={() => setError(null)}
             />
           )}
           {activeView === "matches" && (
