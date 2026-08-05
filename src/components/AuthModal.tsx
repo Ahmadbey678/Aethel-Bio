@@ -21,13 +21,18 @@ const TABS: AuthTab[] = ["signin", "signup"];
  * Email/password authentication modal (Sign In + Create Account tabs) backed
  * by Supabase Auth.
  *
+ * Controlled component: render it once (ideally at the root of the view) and
+ * drive visibility with `isOpen` — the modal returns `null` when closed while
+ * keeping its hook order stable, so focus/escape plumbing never breaks across
+ * open/close transitions.
+ *
  * On a successful sign-in (or a sign-up when email confirmation is disabled)
  * the modal closes; the app's auth-state listeners (e.g. UnmatchedRegistryView)
  * pick up the new session and re-fetch automatically. When email confirmation
  * is required (the hosted Supabase default), the modal shows a "check your
  * inbox" success state with a resend option instead.
  */
-export default function AuthModal({ onClose }: { onClose: () => void }) {
+export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const [tab, setTab] = useState<AuthTab>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -42,34 +47,47 @@ export default function AuthModal({ onClose }: { onClose: () => void }) {
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const successTitleRef = useRef<HTMLHeadingElement>(null);
 
+  /* Reset transient form state every time the modal closes, so re-opening
+     starts from a clean slate. */
+  useEffect(() => {
+    if (isOpen) return;
+    setError(null);
+    setConfirmationPending(false);
+    setResendSent(false);
+    setSubmitting(false);
+  }, [isOpen]);
+
   /* Focus the email field on open; restore focus to the trigger on close. */
   useEffect(() => {
+    if (!isOpen) return;
     emailRef.current?.focus();
     const previouslyFocused = document.activeElement as HTMLElement | null;
     return () => {
       previouslyFocused?.focus?.();
     };
-  }, []);
+  }, [isOpen]);
 
   /* When the confirmation-email success state appears, move focus to it so
      keyboard users don't lose their place (the submit button just unmounted). */
   useEffect(() => {
-    if (confirmationPending) {
+    if (isOpen && confirmationPending) {
       successTitleRef.current?.focus();
     }
-  }, [confirmationPending]);
+  }, [isOpen, confirmationPending]);
 
   /* Close on Escape (unless a request is in flight). */
   useEffect(() => {
+    if (!isOpen) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !submitting) onClose();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onClose, submitting]);
+  }, [isOpen, onClose, submitting]);
 
   /* Trap Tab / Shift+Tab inside the modal. */
   useEffect(() => {
+    if (!isOpen) return;
     const modal = modalRef.current;
     if (!modal) return;
     const handler = (e: KeyboardEvent) => {
@@ -90,7 +108,7 @@ export default function AuthModal({ onClose }: { onClose: () => void }) {
     };
     modal.addEventListener("keydown", handler);
     return () => modal.removeEventListener("keydown", handler);
-  }, []);
+  }, [isOpen]);
 
   const switchTab = (next: AuthTab) => {
     if (next === tab) return;
@@ -234,6 +252,10 @@ export default function AuthModal({ onClose }: { onClose: () => void }) {
     `inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-all duration-150 cursor-pointer ${
       active ? "bg-surface-raised text-text-primary shadow-sm" : "text-text-muted hover:text-text-primary"
     }`;
+
+  /* Controlled visibility — every hook above always runs; only the DOM output
+     is gated, so React's hook order stays stable across open/close. */
+  if (!isOpen) return null;
 
   return (
     <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">

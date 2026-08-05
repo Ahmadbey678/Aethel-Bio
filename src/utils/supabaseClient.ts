@@ -1,7 +1,18 @@
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+/**
+ * Read a Vite env var defensively: trims whitespace and falls back to an
+ * empty string. This guarantees `createClient()` is only ever called with
+ * valid non-empty strings — a missing or blank `VITE_SUPABASE_URL` must never
+ * throw a "supabaseUrl is required" exception on mount.
+ */
+function readEnvVar(name: string): string {
+  const value = import.meta.env[name] as string | undefined;
+  return typeof value === "string" ? value.trim() : "";
+}
+
+const supabaseUrl = readEnvVar("VITE_SUPABASE_URL");
+const supabaseAnonKey = readEnvVar("VITE_SUPABASE_ANON_KEY");
 
 /**
  * `null` when VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY aren't configured
@@ -12,10 +23,21 @@ export const supabase: SupabaseClient | null =
   supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
 if (!supabase) {
+  const missing = [
+    supabaseUrl ? null : "VITE_SUPABASE_URL",
+    supabaseAnonKey ? null : "VITE_SUPABASE_ANON_KEY",
+  ]
+    .filter(Boolean)
+    .join(" and ");
   console.warn(
-    "Supabase is not configured — VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are missing. " +
+    `Supabase is not configured — missing ${missing}. ` +
       "Unmatched Registry persistence will be disabled.",
   );
+}
+
+/** True when the Supabase client initialised with valid credentials. */
+export function isSupabaseConfigured(): boolean {
+  return supabase !== null;
 }
 
 /** High-privilege role required to access the Unmatched Patient Registry. */

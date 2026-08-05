@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   Users,
   RefreshCw,
@@ -123,19 +123,30 @@ export default function UnmatchedRegistryView() {
     const client = supabase;
 
     const resolve = async () => {
-      const {
-        data: { user },
-      } = await client.auth.getUser();
-      if (!active) return;
-      /* `getUser()` re-validates the token server-side; `user` is null when
-         the session is missing/expired. Build a minimal view of the session
-         from the user record so role checks keep working. */
-      const current = user ? ({ user } as Session) : null;
-      setSession(current);
-      setSessionChecked(true);
-      if (isAdminSession(current)) {
-        void loadRecords();
-      } else {
+      try {
+        const {
+          data: { user },
+        } = await client.auth.getUser();
+        if (!active) return;
+        /* `getUser()` re-validates the token server-side; `user` is null when
+           the session is missing/expired. Build a minimal view of the session
+           from the user record so role checks keep working. */
+        const current = user ? ({ user } as Session) : null;
+        setSession(current);
+        setSessionChecked(true);
+        if (isAdminSession(current)) {
+          void loadRecords();
+        } else {
+          setLoadState("ready");
+        }
+      } catch (err) {
+        /* Network / init failures must never freeze the view: log the error
+           and fall back to the signed-out "Dev Mode" gate so the auth modal
+           can still be opened locally. */
+        console.error("Supabase Auth Error:", err);
+        if (!active) return;
+        setSession(null);
+        setSessionChecked(true);
         setLoadState("ready");
       }
     };
@@ -241,8 +252,10 @@ export default function UnmatchedRegistryView() {
 
   /* ── Render: config / session / access gates ────────────────────────── */
 
+  let content: ReactNode;
+
   if (!supabase) {
-    return (
+    content = (
       <div className="mx-auto max-w-2xl px-4 py-24 text-center sm:px-6">
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive-muted">
           <AlertTriangle className="h-6 w-6 text-destructive" />
@@ -253,21 +266,29 @@ export default function UnmatchedRegistryView() {
           <code className="rounded bg-surface-raised px-1.5 py-0.5 text-xs">VITE_SUPABASE_ANON_KEY</code> to enable
           the Unmatched Patient Registry.
         </p>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            console.log("Opening auth modal...");
+            setIsAuthModalOpen(true);
+          }}
+          className="mt-5 inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-glow transition-all duration-150 hover:bg-primary-hover active:scale-[0.97] cursor-pointer"
+        >
+          <LogIn className="h-4 w-4" />
+          Sign In (Dev Mode)
+        </button>
       </div>
     );
-  }
-
-  if (!sessionChecked) {
-    return (
+  } else if (!sessionChecked) {
+    content = (
       <div className="mx-auto flex max-w-2xl flex-col items-center px-4 py-24 text-center sm:px-6">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="mt-3 text-sm text-text-secondary">Checking your access…</p>
       </div>
     );
-  }
-
-  if (!isSignedIn) {
-    return (
+  } else if (!isSignedIn) {
+    content = (
       <div className="mx-auto max-w-2xl px-4 py-24 text-center sm:px-6">
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-raised">
           <LogIn className="h-6 w-6 text-text-muted" />
@@ -290,10 +311,8 @@ export default function UnmatchedRegistryView() {
         </button>
       </div>
     );
-  }
-
-  if (!isAdmin) {
-    return (
+  } else if (!isAdmin) {
+    content = (
       <div className="mx-auto max-w-2xl px-4 py-24 text-center sm:px-6">
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive-muted">
           <ShieldAlert className="h-6 w-6 text-destructive" />
@@ -305,11 +324,9 @@ export default function UnmatchedRegistryView() {
         </p>
       </div>
     );
-  }
-
-  /* ── Render: admin registry (loaded) ────────────────────────────────── */
-
-  return (
+  } else {
+    /* ── Render: admin registry (loaded) ──────────────────────────────── */
+    content = (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-text-muted">
@@ -464,9 +481,18 @@ export default function UnmatchedRegistryView() {
         />
       )}
 
-      {/* ── Auth modal (signed-out users) ── */}
-      {isAuthModalOpen && <AuthModal onClose={() => setIsAuthModalOpen(false)} />}
     </div>
+    );
+  }
+
+  /* ── Root render: the auth modal mounts unconditionally at the very root,
+     outside every conditional wrapper, so it is guaranteed visible whenever
+     `isAuthModalOpen` is true (signed-out, dev-mode, and admin states). ── */
+  return (
+    <>
+      <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
+      {content}
+    </>
   );
 }
 
