@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Users,
   RefreshCw,
@@ -10,6 +10,11 @@ import {
   Trash2,
   X,
   CheckCircle2,
+  Gauge,
+  Layers,
+  List,
+  Target,
+  TrendingUp,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, isAdminSession, isPermissionDenied, onAuthStateChange } from "../utils/supabaseClient";
@@ -33,12 +38,61 @@ interface PatientRecord {
 
 type LoadState = "loading" | "ready" | "error";
 
+type ViewMode = "detailed" | "grouped";
+
 function formatTimestamp(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+/** Stored match scores are decimal fractions (0–1); guard against any legacy 0–100 values. */
+function asPercent(value: number | null): number | null {
+  if (value === null || Number.isNaN(value)) return null;
+  return value > 1 ? value : value * 100;
+}
+
 function formatScore(value: number | null): string {
-  return value === null ? "—" : `${Math.round(value * 100)}%`;
+  const pct = asPercent(value);
+  return pct === null ? "—" : `${Math.round(pct)}%`;
+}
+
+/** Clamp a match score to a 0–100 percentage for progress-bar widths. */
+function clampPct(value: number | null): number {
+  const pct = asPercent(value);
+  if (pct === null) return 0;
+  return Math.min(100, Math.max(0, pct));
+}
+
+type ScoreTone = "destructive" | "warning" | "success";
+
+const SCORE_TONE_STYLES: Record<ScoreTone, { bar: string; text: string }> = {
+  destructive: { bar: "bg-destructive", text: "text-destructive" },
+  warning: { bar: "bg-warning", text: "text-warning" },
+  success: { bar: "bg-success", text: "text-success" },
+};
+
+/** Red < 25%, amber 25–49%, green ≥ 50% — low trial fit is the story here. */
+function scoreTone(pct: number): ScoreTone {
+  if (pct < 25) return "destructive";
+  if (pct < 50) return "warning";
+  return "success";
+}
+
+/** Compact color-coded progress bar for a match score (tone via `scoreTone`). */
+function ScoreBar({ value }: { value: number | null }) {
+  const pct = clampPct(value);
+  const tone = scoreTone(pct);
+  return (
+    <span
+      role="img"
+      aria-label={`${formatScore(value)} trial fit`}
+      className="inline-block h-1.5 w-16 overflow-hidden rounded-full bg-surface-hover"
+    >
+      <span
+        className={`block h-full rounded-full ${SCORE_TONE_STYLES[tone].bar} transition-all duration-300`}
+        style={{ width: `${pct}%` }}
+      />
+    </span>
+  );
 }
 
 function formatNumber(value: number | null): string {
@@ -61,6 +115,44 @@ function toPatientRecord(row: UnmatchedPatientRow): PatientRecord {
   };
 }
 
+/* ── Cohort analytics ──────────────────────────────────────────────── */
+
+interface CohortGroup {
+  key: string;
+  disease: string;
+  biomarker: string;
+  count: number;
+  avgScore: number | null;
+}
+
+/** Group records by disease + biomarker, with cohort size and mean match score. */
+function buildCohorts(records: PatientRecord[]): CohortGroup[] {
+  const map = new Map<string, { disease: string; biomarker: string; count: number; scores: number[] }>();
+  for (const r of records) {
+    const key = `${r.disease.trim().toLowerCase()}::${r.biomarker.trim().toLowerCase()}`;
+    const group = map.get(key) ?? { disease: r.disease, biomarker: r.biomarker, count: 0, scores: [] };
+    group.count += 1;
+    if (r.bestMatchScore !== null && !Number.isNaN(r.bestMatchScore)) group.scores.push(r.bestMatchScore);
+    map.set(key, group);
+  }
+  return Array.from(map.values())
+    .map((g) => ({
+      key: `${g.disease}::${g.biomarker}`,
+      disease: g.disease,
+      biomarker: g.biomarker,
+      count: g.count,
+      avgScore: g.scores.length > 0 ? g.scores.reduce((a, b) => a + b, 0) / g.scores.length : null,
+    }))
+    .sort((a, b) => b.count - a.count || a.disease.localeCompare(b.disease));
+}
+
+/** Human-readable label for the trial gap a cohort represents. */
+function missingTrialLabel(biomarker: string): string {
+  const b = biomarker.trim();
+  if (!b) return "No active trial found";
+  return /\binhibitor\b/i.test(b) ? `Needs ${b} trial` : `Needs ${b} inhibitor trial`;
+}
+
 /* ── Admin-gated registry view ─────────────────────────────────────────── */
 
 export default function UnmatchedRegistryView() {
@@ -74,9 +166,26 @@ export default function UnmatchedRegistryView() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("detailed");
 
   const isAdmin = isAdminSession(session);
   const isSignedIn = session !== null;
+
+  /* Registry analytics derived from the loaded records (KPI cards + cohorts). */
+  const cohorts = useMemo(() => buildCohorts(records), [records]);
+  const totalUnmatched = useMemo(
+    () =>
+      records.filter((r) => {
+        const pct = asPercent(r.bestMatchScore);
+        return pct !== null && pct < 50;
+      }).length,
+    [records],
+  );
+  const avgScore = useMemo(() => {
+    const scores = records.map((r) => r.bestMatchScore).filter((s): s is number => s !== null && !Number.isNaN(s));
+    return scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
+  }, [records]);
+  const topCohort = cohorts.length > 0 ? cohorts[0] : null;
 
   const loadRecords = useCallback(async () => {
     setLoadState("loading");
@@ -333,7 +442,16 @@ export default function UnmatchedRegistryView() {
           Patients whose best-matching trial scored below 50% — grouped by disease + biomarker to surface unmet
           demand for new trials.
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <SegmentControl
+            value={viewMode}
+            onChange={setViewMode}
+            options={[
+              { value: "detailed", label: "Detailed view", icon: List },
+              { value: "grouped", label: "Grouped by biomarker", icon: Layers },
+            ]}
+            label="Registry view"
+          />
           <button
             onClick={() => setShowAddForm((v) => !v)}
             className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border-subtle bg-surface-raised px-3 py-1.5 text-xs font-medium text-text-secondary transition-all duration-150 hover:border-primary/40 hover:bg-primary-muted hover:text-primary cursor-pointer"
@@ -350,6 +468,30 @@ export default function UnmatchedRegistryView() {
             Refresh
           </button>
         </div>
+      </div>
+
+      {/* Summary KPI cards — headline unmet-demand metrics first */}
+      <div className="mb-6 grid gap-4 sm:grid-cols-3">
+        <KpiCard
+          label="Total unmatched patients"
+          value={String(records.length)}
+          icon={Users}
+          hint={`${totalUnmatched} with a best match below 50%`}
+        />
+        <KpiCard
+          label="Highest unmet demand"
+          value={topCohort ? `${topCohort.disease} + ${topCohort.biomarker}` : "—"}
+          icon={Target}
+          hint={topCohort ? `${topCohort.count} patient${topCohort.count !== 1 ? "s" : ""} awaiting a trial` : "No cohorts logged yet"}
+          accent="primary"
+        />
+        <KpiCard
+          label="Average cohort match score"
+          value={formatScore(avgScore)}
+          icon={Gauge}
+          hint={avgScore === null ? "No scored records yet" : "Mean of logged best-match scores"}
+          accent="success"
+        />
       </div>
 
       {loadError && (
@@ -406,67 +548,123 @@ export default function UnmatchedRegistryView() {
 
       {records.length > 0 && (
         <>
-          <p className="mb-3 text-xs font-medium text-text-muted">
-            {records.length} record{records.length !== 1 ? "s" : ""}
-          </p>
-          <div className="overflow-hidden rounded-xl border border-border-subtle bg-surface-raised">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-left text-sm">
-                <thead>
-                  <tr className="border-b border-border-subtle text-[11px] uppercase tracking-wide text-text-muted">
-                    <th scope="col" className="px-4 py-3 font-semibold">
-                      Biomarker
-                    </th>
-                    <th scope="col" className="px-4 py-3 font-semibold">
-                      Disease
-                    </th>
-                    <th scope="col" className="px-4 py-3 font-semibold">
-                      Stage
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-right font-semibold">
-                      Best match
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-right font-semibold">
-                      Trials
-                    </th>
-                    <th scope="col" className="px-4 py-3 font-semibold">
-                      Last seen
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-right font-semibold">
-                      <span className="sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {records.map((record) => (
-                    <tr
-                      key={record.id}
-                      className="border-b border-border-subtle/60 transition-colors last:border-b-0 hover:bg-surface-hover/40"
-                    >
-                      <td className="px-4 py-3 font-medium text-text-primary">{record.biomarker}</td>
-                      <td className="px-4 py-3 text-text-secondary">{record.disease}</td>
-                      <td className="px-4 py-3 text-text-secondary">{record.stage ?? "—"}</td>
-                      <td className="px-4 py-3 text-right text-text-secondary">{formatScore(record.bestMatchScore)}</td>
-                      <td className="px-4 py-3 text-right text-text-secondary">
-                        {formatNumber(record.trialsConsidered)}
-                      </td>
-                      <td className="px-4 py-3 text-text-secondary">{formatTimestamp(record.createdAt)}</td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => setDeleteTarget(record)}
-                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-text-muted transition-all duration-150 hover:bg-destructive-muted hover:text-destructive cursor-pointer"
-                          aria-label={`Delete ${record.biomarker} + ${record.disease} record`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="text-xs font-medium text-text-muted">
+              {viewMode === "detailed"
+                ? `${records.length} record${records.length !== 1 ? "s" : ""}`
+                : `${cohorts.length} cohort${cohorts.length !== 1 ? "s" : ""} across ${records.length} record${
+                    records.length !== 1 ? "s" : ""
+                  }`}
+            </p>
+            {viewMode === "detailed" && (
+              <span className="text-[11px] text-text-muted">Color shows trial fit: red &lt; 25% · amber 25–49% · green ≥ 50%</span>
+            )}
           </div>
+
+          {viewMode === "detailed" ? (
+            <div className="overflow-hidden rounded-xl border border-border-subtle bg-surface-raised">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-border-subtle text-[11px] uppercase tracking-wide text-text-muted">
+                      <th scope="col" className="px-4 py-3 font-semibold">
+                        Biomarker
+                      </th>
+                      <th scope="col" className="px-4 py-3 font-semibold">
+                        Disease
+                      </th>
+                      <th scope="col" className="px-4 py-3 font-semibold">
+                        Stage
+                      </th>
+                      <th scope="col" className="px-4 py-3 font-semibold">
+                        Best match
+                      </th>
+                      <th scope="col" className="px-4 py-3 text-right font-semibold">
+                        Trials
+                      </th>
+                      <th scope="col" className="px-4 py-3 font-semibold">
+                        Last seen
+                      </th>
+                      <th scope="col" className="px-4 py-3 text-right font-semibold">
+                        <span className="sr-only">Actions</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {records.map((record) => (
+                      <tr
+                        key={record.id}
+                        className="border-b border-border-subtle/60 transition-colors last:border-b-0 hover:bg-surface-hover/40"
+                      >
+                        <td className="px-4 py-3 font-medium text-text-primary">{record.biomarker}</td>
+                        <td className="px-4 py-3 text-text-secondary">{record.disease}</td>
+                        <td className="px-4 py-3 text-text-secondary">{record.stage ?? "—"}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-2.5">
+                            <span className="text-xs font-medium text-text-secondary tabular-nums">
+                              {formatScore(record.bestMatchScore)}
+                            </span>
+                            <ScoreBar value={record.bestMatchScore} />
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right text-text-secondary tabular-nums">
+                          {formatNumber(record.trialsConsidered)}
+                        </td>
+                        <td className="px-4 py-3 text-text-secondary">{formatTimestamp(record.createdAt)}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            onClick={() => setDeleteTarget(record)}
+                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-text-muted transition-all duration-150 hover:bg-destructive-muted hover:text-destructive cursor-pointer"
+                            aria-label={`Delete ${record.biomarker} + ${record.disease} record`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              {cohorts.map((cohort) => {
+                const pct = asPercent(cohort.avgScore);
+                const tone = pct === null ? "warning" : scoreTone(pct);
+                const styles = SCORE_TONE_STYLES[tone];
+                return (
+                  <div
+                    key={cohort.key}
+                    className="rounded-xl border border-border-subtle bg-surface-raised p-4 animate-fade-in-up"
+                  >
+                    <div className="mb-2 flex items-start justify-between gap-3">
+                      <div>
+                        <h4 className="font-heading text-sm font-semibold text-text-primary">{cohort.disease}</h4>
+                        <p className="text-xs font-medium text-accent">{cohort.biomarker}</p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-surface-hover px-2.5 py-1 text-xs font-medium text-text-secondary">
+                        {cohort.count} patient{cohort.count !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <span className={`text-xs font-semibold ${styles.text}`}>Avg {formatScore(cohort.avgScore)}</span>
+                      <span className={`h-1.5 w-24 overflow-hidden rounded-full bg-surface-hover`}>
+                        <span
+                          className={`block h-full rounded-full ${styles.bar} transition-all duration-300`}
+                          style={{ width: `${clampPct(cohort.avgScore)}%` }}
+                        />
+                      </span>
+                    </div>
+                    <span className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium ${styles.text} ${styles.bar === "bg-warning" ? "bg-warning-muted" : styles.bar === "bg-destructive" ? "bg-destructive-muted" : "bg-success-muted"}`}>
+                      <TrendingUp className="h-3 w-3" />
+                      {missingTrialLabel(cohort.biomarker)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </>
       )}
 
@@ -811,6 +1009,91 @@ function DeleteConfirmDialog({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ── Summary KPI card ────────────────────────────────────────────────── */
+
+const KPI_ACCENTS: Record<"default" | "primary" | "success", { icon: string; label: string }> = {
+  default: { icon: "text-text-muted", label: "text-text-primary" },
+  primary: { icon: "text-primary", label: "text-text-primary" },
+  success: { icon: "text-success", label: "text-text-primary" },
+};
+
+function KpiCard({
+  label,
+  value,
+  hint,
+  icon: Icon,
+  accent = "default",
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  icon: typeof Users;
+  accent?: keyof typeof KPI_ACCENTS;
+}) {
+  const tones = KPI_ACCENTS[accent];
+  return (
+    <div className="rounded-xl border border-border-subtle bg-surface-raised p-4 animate-fade-in-up">
+      <div className="mb-2 flex items-center gap-2">
+        <span className={`flex h-8 w-8 items-center justify-center rounded-lg bg-surface-hover ${tones.icon}`}>
+          <Icon className="h-4 w-4" />
+        </span>
+        <p className="text-xs font-medium text-text-muted">{label}</p>
+      </div>
+      <p className={`font-heading text-xl font-semibold leading-tight ${tones.label}`}>{value}</p>
+      <p className="mt-1 text-xs text-text-muted">{hint}</p>
+    </div>
+  );
+}
+
+/* ── Segmented view toggle ───────────────────────────────────────────── */
+
+interface SegmentOption<T extends string> {
+  value: T;
+  label: string;
+  icon: typeof List;
+}
+
+function SegmentControl<T extends string>({
+  value,
+  onChange,
+  options,
+  label,
+}: {
+  value: T;
+  onChange: (value: T) => void;
+  options: SegmentOption<T>[];
+  label: string;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      className="inline-flex items-center rounded-lg border border-border-subtle bg-surface-raised p-0.5"
+    >
+      {options.map((option) => {
+        const active = option.value === value;
+        const Icon = option.icon;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            aria-pressed={active}
+            className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-all duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none ${
+              active
+                ? "bg-primary text-white shadow-glow"
+                : "text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+            }`}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
