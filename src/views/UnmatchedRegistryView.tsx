@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Users,
   RefreshCw,
@@ -37,8 +37,6 @@ export interface PatientRecord {
   bestMatchScore: number | null;
   trialsConsidered: number | null;
   createdByEmail: string | null;
-  loggedBy: string | null;
-  labMetrics: Record<string, unknown> | null;
   createdAt: string;
 }
 
@@ -66,8 +64,6 @@ function toPatientRecord(row: UnmatchedPatientRow): PatientRecord {
     bestMatchScore: row.best_match_score,
     trialsConsidered: row.trials_considered,
     createdByEmail: row.created_by_email,
-    loggedBy: row.logged_by,
-    labMetrics: row.lab_metrics,
     createdAt: row.created_at,
   };
 }
@@ -152,7 +148,7 @@ export default function UnmatchedRegistryView() {
       const { data, error } = await supabase!
         .from("unmatched_patients")
         .select(
-          "id, biomarker, disease, stage, lab_metrics, best_match_score, trials_considered, created_by_email, logged_by, created_at, updated_at",
+          "id, biomarker, disease, stage, lab_metrics, best_match_score, trials_considered, created_by_email, created_at, updated_at",
         )
         .order("created_at", { ascending: false })
         .returns<UnmatchedPatientRow[]>();
@@ -259,21 +255,12 @@ export default function UnmatchedRegistryView() {
       }
       setRecords((prev) => prev.filter((r) => r.id !== deleteTarget.id));
       setDeleteTarget(null);
-      if (selectedRecord?.id === deleteTarget.id) setSelectedRecord(null);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "We couldn't delete that record.");
     } finally {
       setDeletingId(null);
     }
-  }, [deleteTarget, selectedRecord]);
-
-  /** Deletion lives inside the patient drawer: clicking "Delete Record" there
-      closes the drawer and hands the record to the confirmation dialog, which
-      requires an explicit "Confirm Deletion" click before anything is removed. */
-  const handleRequestDelete = useCallback((record: PatientRecord) => {
-    setSelectedRecord(null);
-    setDeleteTarget(record);
-  }, []);
+  }, [deleteTarget]);
 
   const handleAdd = useCallback(
     async (input: {
@@ -305,7 +292,7 @@ export default function UnmatchedRegistryView() {
           created_by_email: createdByEmail,
         })
         .select(
-          "id, biomarker, disease, stage, lab_metrics, best_match_score, trials_considered, created_by_email, logged_by, created_at, updated_at",
+          "id, biomarker, disease, stage, lab_metrics, best_match_score, trials_considered, created_by_email, created_at, updated_at",
         )
         .returns<UnmatchedPatientRow[]>()
         .single();
@@ -336,7 +323,7 @@ export default function UnmatchedRegistryView() {
       const { data } = await supabase!
         .from("unmatched_patients")
         .select(
-          "id, biomarker, disease, stage, lab_metrics, best_match_score, trials_considered, created_by_email, logged_by, created_at, updated_at",
+          "id, biomarker, disease, stage, lab_metrics, best_match_score, trials_considered, created_by_email, created_at, updated_at",
         )
         .eq("id", recordId)
         .returns<UnmatchedPatientRow[]>()
@@ -573,7 +560,7 @@ export default function UnmatchedRegistryView() {
                         Last seen
                       </th>
                       <th scope="col" className="px-4 py-3 text-right font-semibold">
-                        <span className="sr-only">Open details</span>
+                        <span className="sr-only">Actions</span>
                       </th>
                     </tr>
                   </thead>
@@ -610,7 +597,20 @@ export default function UnmatchedRegistryView() {
                         </td>
                         <td className="px-4 py-3 text-text-secondary">{formatTimestamp(record.createdAt)}</td>
                         <td className="px-4 py-3 text-right">
-                          <ChevronRight className="ml-auto h-3.5 w-3.5 text-text-muted" aria-hidden="true" />
+                          <div className="flex items-center justify-end gap-1.5">
+                            <ChevronRight className="h-3.5 w-3.5 text-text-muted" aria-hidden="true" />
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteTarget(record);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-text-muted transition-all duration-150 hover:bg-destructive-muted hover:text-destructive cursor-pointer"
+                              aria-label={`Delete ${record.biomarker} + ${record.disease} record`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -678,7 +678,6 @@ export default function UnmatchedRegistryView() {
           record={selectedRecord}
           onClose={() => setSelectedRecord(null)}
           onRecordUpdated={handleRecordUpdated}
-          onRequestDelete={handleRequestDelete}
         />
       )}
 
@@ -961,79 +960,38 @@ function DeleteConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const confirmRef = useRef<HTMLButtonElement>(null);
-
-  /* Focus management: move focus into the dialog on open, trap Tab inside,
-     close on Escape, and restore focus to the previous element on unmount.
-     The destructive confirm button is the default (Enter) action. */
-  useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    confirmRef.current?.focus();
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        if (!busy) onCancel();
-        return;
-      }
-      if (e.key !== "Tab") return;
-      const focusables = dialogRef.current?.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-      );
-      if (!focusables || focusables.length === 0) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      previouslyFocused?.focus();
-    };
-  }, [busy, onCancel]);
-
   return (
     <div
-      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="delete-dialog-title"
       aria-describedby="delete-dialog-desc"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !busy) onCancel();
+      }}
     >
       <div className="w-full max-w-md rounded-xl border border-border-subtle bg-surface-raised p-5 shadow-card animate-scale-in">
         <div className="mb-3 flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-destructive-muted">
-            <Trash2 className="h-5 w-5 text-destructive" aria-hidden="true" />
+            <Trash2 className="h-5 w-5 text-destructive" />
           </div>
           <div>
             <h3 id="delete-dialog-title" className="font-heading text-base font-semibold text-text-primary">
               Delete registry record?
             </h3>
             <p id="delete-dialog-desc" className="text-xs text-text-muted">
-              This action cannot be undone.
+              This removes the patient&apos;s unmatched record permanently.
             </p>
           </div>
         </div>
 
-        <p className="rounded-lg bg-surface px-3.5 py-2.5 text-sm leading-relaxed text-text-secondary">
-          Are you sure you want to permanently remove Patient{" "}
-          <span className="font-medium text-text-primary">{patientCode(record.id)}</span> from the Unmatched
-          Registry? This action cannot be undone.
-        </p>
-
-        <div className="mt-2 flex items-center gap-2 rounded-lg bg-surface px-3.5 py-2 text-xs text-text-muted">
+        <p className="rounded-lg bg-surface px-3.5 py-2.5 text-sm text-text-secondary">
           <span className="font-medium text-text-primary">{record.biomarker}</span> +{" "}
           <span className="font-medium text-text-primary">{record.disease}</span>
-          {record.stage ? ` (${record.stage})` : ""} — logged {formatTimestamp(record.createdAt)}
-        </div>
+          {record.stage ? ` (${record.stage})` : ""} — logged{" "}
+          {formatTimestamp(record.createdAt)}
+        </p>
 
         <div className="mt-5 flex justify-end gap-2">
           <button
@@ -1044,13 +1002,12 @@ function DeleteConfirmDialog({
             Cancel
           </button>
           <button
-            ref={confirmRef}
             onClick={onConfirm}
             disabled={busy}
             className="inline-flex items-center gap-1.5 rounded-lg bg-destructive px-3.5 py-2 text-sm font-medium text-white transition-all duration-150 hover:opacity-90 active:scale-[0.97] disabled:opacity-50 cursor-pointer"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            Confirm Deletion
+            Delete record
           </button>
         </div>
       </div>

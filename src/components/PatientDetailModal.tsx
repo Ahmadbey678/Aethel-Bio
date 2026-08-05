@@ -3,7 +3,6 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
-  Copy,
   Download,
   ExternalLink,
   FileText,
@@ -14,7 +13,6 @@ import {
   ShieldAlert,
   SlidersHorizontal,
   Stethoscope,
-  Trash2,
   UserX,
   X,
 } from "lucide-react";
@@ -35,8 +33,6 @@ export interface RegistryRecord {
   bestMatchScore: number | null;
   trialsConsidered: number | null;
   createdByEmail: string | null;
-  loggedBy: string | null;
-  labMetrics: Record<string, unknown> | null;
   createdAt: string;
 }
 
@@ -184,17 +180,9 @@ interface PatientDetailModalProps {
   /** Called after a manual score override is saved so the parent can refresh
       the registry and re-sync the displayed record. */
   onRecordUpdated: (recordId: string) => void | Promise<void>;
-  /** Opens the destructive-confirmation flow for this record. The parent
-      closes the drawer and presents the confirm dialog. */
-  onRequestDelete?: (record: RegistryRecord) => void;
 }
 
-export default function PatientDetailModal({
-  record,
-  onClose,
-  onRecordUpdated,
-  onRequestDelete,
-}: PatientDetailModalProps) {
+export default function PatientDetailModal({ record, onClose, onRecordUpdated }: PatientDetailModalProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -210,7 +198,6 @@ export default function PatientDetailModal({
 
   const pct = asPercent(record.bestMatchScore);
   const diagnostics = useMemo(() => buildMatchDiagnostic(record), [record]);
-  const labEntries = useMemo(() => Object.entries(record.labMetrics ?? {}), [record.labMetrics]);
   const searchUrl = useMemo(
     () =>
       `https://clinicaltrials.gov/search?cond=${encodeURIComponent(record.disease)}&term=${encodeURIComponent(
@@ -300,14 +287,14 @@ export default function PatientDetailModal({
       `Secondary biomarker: Not logged`,
       `Best match score:    ${pct === null ? "—" : `${Math.round(pct)}%`}`,
       `Trials evaluated:    ${record.trialsConsidered ?? "—"}`,
-      `Logged by:           ${record.loggedBy ?? record.createdByEmail ?? "—"}`,
+      `Logged by:           ${record.createdByEmail ?? "—"}`,
       `Logged on:           ${formatDate(record.createdAt)}`,
       "",
       "LAB METRICS",
       "-----------",
-      ...(labEntries.length > 0
-        ? labEntries.map(([k, v]) => `${formatLabKey(k)}: ${formatLabValue(k, v)}`)
-        : ["None logged"]),
+      `EGFR expression:  ${record.egfr === null ? "Not logged" : `${record.egfr}%`}`,
+      `Platelets:        ${record.platelets === null ? "Not logged" : `${record.platelets} ×10⁹/L`}`,
+      `Brain metastases: ${record.noBrainMets === null ? "Not logged" : record.noBrainMets ? "Absent" : "Present"}`,
       "",
       "MATCH DIAGNOSTIC",
       "----------------",
@@ -324,7 +311,7 @@ export default function PatientDetailModal({
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-  }, [record, pct, diagnostics, labEntries]);
+  }, [record, pct, diagnostics]);
 
   const handleOverrideSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -438,13 +425,8 @@ export default function PatientDetailModal({
                 label="Patient code"
                 value={<span className="font-mono text-primary">{patientCode(record.id)}</span>}
               />
-              <div className="col-span-2 rounded-lg border border-border-subtle bg-surface px-3 py-2.5">
-                <dt className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Record ID</dt>
-                <dd className="mt-1">
-                  <CopyRecordId id={record.id} />
-                </dd>
-              </div>
-              <KV label="Logged by" value={record.loggedBy ?? record.createdByEmail ?? "—"} />
+              <KV label="Record ID" value={<span className="font-mono text-[11px]">{shortId(record.id)}</span>} title={record.id} />
+              <KV label="Logged by" value={record.createdByEmail ?? "—"} />
               <KV label="Logged on" value={formatDate(record.createdAt)} />
             </dl>
           </section>
@@ -474,25 +456,33 @@ export default function PatientDetailModal({
             <SectionHeading icon={Microscope} id="detail-lab-title">
               Lab metrics breakdown
             </SectionHeading>
-            {labEntries.length > 0 ? (
-              <div className="grid grid-cols-2 gap-3">
-                {labEntries.map(([key, value]) => (
-                  <MetricTile
-                    key={key}
-                    label={formatLabKey(key)}
-                    value={formatLabValue(key, value)}
-                    muted={isMissingLabValue(value)}
-                    warn={labValueWarn(key, value)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <p className="rounded-xl border border-dashed border-border-subtle bg-surface px-3.5 py-4 text-xs leading-relaxed text-text-muted">
-                No lab metrics are logged for this patient yet. Values added to the record&apos;s{" "}
-                <code className="rounded bg-surface-hover px-1 py-0.5 font-mono text-[10px]">lab_metrics</code> field
-                will appear here as chips.
-              </p>
-            )}
+            <div className="grid grid-cols-2 gap-3">
+              <MetricTile
+                label="EGFR expression"
+                value={record.egfr === null ? "Not logged" : `${record.egfr}%`}
+                muted={record.egfr === null}
+              />
+              <MetricTile
+                label="Platelets"
+                value={record.platelets === null ? "Not logged" : `${record.platelets} ×10⁹/L`}
+                muted={record.platelets === null}
+                warn={record.platelets !== null && (record.platelets < 150 || record.platelets > 450)}
+              />
+              <MetricTile
+                label="Brain metastases"
+                value={record.noBrainMets === null ? "Not logged" : record.noBrainMets ? "Absent" : "Present"}
+                muted={record.noBrainMets === null}
+                warn={record.noBrainMets === false}
+              />
+              <MetricTile label="TP53 status" value="Not logged" muted />
+              <MetricTile label="ALK status" value="Not logged" muted />
+              <MetricTile label="PD-L1 CPS" value="Not logged" muted />
+            </div>
+            <p className="mt-2.5 text-[11px] leading-relaxed text-text-muted">
+              Additional markers (TP53, ALK, PD-L1 CPS) aren&apos;t captured on this record — extend{" "}
+              <code className="rounded bg-surface-hover px-1 py-0.5 font-mono text-[10px]">lab_metrics</code> to log
+              them.
+            </p>
           </section>
 
           {/* Match diagnostic */}
@@ -655,18 +645,6 @@ export default function PatientDetailModal({
               Manually override match
             </button>
           </div>
-
-          {/* Destructive action — visually separated from the primary actions */}
-          <div className="border-t border-border-subtle pt-2.5">
-            <button
-              type="button"
-              onClick={() => onRequestDelete?.(record)}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-border-subtle bg-surface-raised px-3.5 py-2 text-sm font-medium text-text-secondary transition-all duration-150 hover:border-destructive/40 hover:bg-destructive-muted hover:text-destructive active:scale-[0.98] cursor-pointer"
-            >
-              <Trash2 className="h-4 w-4" aria-hidden="true" />
-              Delete Record
-            </button>
-          </div>
         </footer>
       </div>
     </div>
@@ -715,126 +693,5 @@ function MetricTile({
       <p className="text-[10px] font-medium uppercase tracking-wide text-text-muted">{label}</p>
       <p className={`mt-1 truncate text-sm font-medium tabular-nums ${tone}`}>{value}</p>
     </div>
-  );
-}
-
-/* ── Lab metrics rendering ─────────────────────────────────────────────
-   The registry stores `lab_metrics` as a free-form JSONB object (the AI
-   extraction pipeline may log anything from EGFR to PD-L1 CPS to ECOG).
-   Render every key/value pair as a medical attribute chip, with friendly
-   labels and units for the fields we know about. */
-
-const LAB_KEY_LABELS: Record<string, string> = {
-  egfr: "EGFR expression",
-  platelets: "Platelets",
-  noBrainMets: "Brain metastases",
-  no_brain_mets: "Brain metastases",
-  pdl1: "PD-L1",
-  pdl1_expression: "PD-L1 expression",
-  pdl1_cps: "PD-L1 CPS",
-  pd_l1_cps: "PD-L1 CPS",
-  tp53: "TP53 status",
-  alk: "ALK status",
-  tmb: "TMB score",
-  tmb_score: "TMB score",
-  ecog: "ECOG",
-  ecog_score: "ECOG",
-  her2: "HER2 status",
-  kras: "KRAS status",
-  braf: "BRAF status",
-  msi: "MSI status",
-  msi_status: "MSI status",
-};
-
-const LAB_VALUE_UNITS: Record<string, string> = {
-  egfr: "%",
-  platelets: " ×10⁹/L",
-  tmb: " mut/Mb",
-  tmb_score: " mut/Mb",
-};
-
-function formatLabKey(key: string): string {
-  const known = LAB_KEY_LABELS[key];
-  if (known) return known;
-  return key.replace(/[_-]+/g, " ").replace(/\b[a-z]/g, (c) => c.toUpperCase());
-}
-
-function isMissingLabValue(value: unknown): boolean {
-  return value === null || value === undefined || value === "";
-}
-
-function formatLabValue(key: string, value: unknown): string {
-  if (isMissingLabValue(value)) return "Not logged";
-  if (key === "noBrainMets" || key === "no_brain_mets") {
-    return typeof value === "boolean" ? (value ? "Absent" : "Present") : String(value);
-  }
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (typeof value === "number") return `${value}${LAB_VALUE_UNITS[key] ?? ""}`;
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
-
-function labValueWarn(key: string, value: unknown): boolean {
-  if (key === "noBrainMets" || key === "no_brain_mets") return value === false;
-  if (key === "platelets" && typeof value === "number") return value < 150 || value > 450;
-  if (key === "egfr" && typeof value === "number") return value < 50;
-  return false;
-}
-
-/* ── Record ID copy badge ────────────────────────────────────────────── */
-
-function CopyRecordId({ id }: { id: string }) {
-  const [copied, setCopied] = useState(false);
-  const timerRef = useRef<number | null>(null);
-
-  const handleCopy = async () => {
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(id);
-      } else {
-        /* Fallback for non-secure contexts where the Clipboard API is absent. */
-        const ta = document.createElement("textarea");
-        ta.value = id;
-        ta.setAttribute("readonly", "");
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        ta.remove();
-      }
-      setCopied(true);
-      if (timerRef.current) window.clearTimeout(timerRef.current);
-      timerRef.current = window.setTimeout(() => setCopied(false), 1800);
-    } catch {
-      /* Clipboard blocked — the hover tooltip still exposes the full ID. */
-    }
-  };
-
-  return (
-    <span className="group relative inline-flex max-w-full">
-      <button
-        type="button"
-        onClick={handleCopy}
-        aria-label={`Copy record ID ${id}`}
-        className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised px-2 py-1 font-mono text-[11px] text-text-secondary transition-all duration-150 hover:border-primary/40 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
-      >
-        <span className="truncate">{shortId(id)}</span>
-        {copied ? (
-          <CheckCircle2 className="h-3 w-3 shrink-0 text-success" aria-hidden="true" />
-        ) : (
-          <Copy className="h-3 w-3 shrink-0 text-text-muted" aria-hidden="true" />
-        )}
-        <span className="sr-only" role="status">
-          {copied ? "Record ID copied to clipboard." : ""}
-        </span>
-      </button>
-      <span
-        role="tooltip"
-        className="pointer-events-none absolute left-0 top-full z-20 mt-1.5 w-max max-w-[280px] truncate rounded-md border border-border-subtle bg-surface-hover px-2 py-1 font-mono text-[10px] text-text-secondary shadow-card opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
-      >
-        {copied ? "Copied to clipboard" : id}
-      </span>
-    </span>
   );
 }

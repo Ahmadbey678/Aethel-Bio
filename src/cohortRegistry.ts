@@ -39,13 +39,11 @@ export interface UnmatchedPatientRow {
     egfr?: number | null;
     platelets?: number | null;
     noBrainMets?: boolean;
-    [key: string]: unknown;
   } | null;
   best_match_score: number | null;
   trials_considered: number | null;
   created_by: string | null;
   created_by_email: string | null;
-  logged_by: string | null;
   created_at: string;
   updated_at: string;
 }
