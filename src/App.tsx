@@ -1,107 +1,33 @@
-import { useState, useCallback, useEffect, useRef } from "react";
-import { Search, Dna, FlaskConical, ArrowRight, AlertCircle, Sparkles, Upload, FileText, RotateCcw, Loader2, MapPin } from "lucide-react";
+import { useState, useCallback, useEffect } from "react";
+import { Menu, Sparkles } from "lucide-react";
 import TrialMatchSimulator from "./TrialMatchSimulator";
 import { extractFileText } from "./extractReport";
+import { scoreTrial } from "./trialScoring";
+import { logUnmatchedCohort, UNMATCHED_MATCH_THRESHOLD } from "./cohortRegistry";
+import Sidebar, { VIEW_TITLES, type ViewKey } from "./components/Sidebar";
+import HomeView from "./views/HomeView";
+import MatchesView from "./views/MatchesView";
+import QueriesView from "./views/QueriesView";
+import PathologyView from "./views/PathologyView";
+import UnmatchedRegistryView from "./views/UnmatchedRegistryView";
+import SettingsView from "./views/SettingsView";
+import type {
+  StudyProtocol,
+  PatientProfile,
+  TrialCardData,
+  QueryHistoryEntry,
+  PathologyHistoryEntry,
+} from "./types";
 
-// Supabase project URL — Edge Function endpoint
+// Supabase project URL — Edge Function endpoint (separate from the
+// VITE_SUPABASE_* client used for the Unmatched Registry table).
 const SUPABASE_URL = "https://cioaszuvlpzbraavdlri.supabase.co";
-
-/* ── Types ─────────────────────────────────────────── */
-
-interface StudyProtocol {
-  protocolSection: {
-    identificationModule: {
-      nctId: string;
-      briefTitle: string;
-      officialTitle?: string;
-    };
-    statusModule: {
-      overallStatus: string;
-      lastKnownStatus?: string;
-    };
-    sponsorCollaboratorsModule: {
-      leadSponsor: { name: string; class?: string };
-      collaborators?: { name: string; class: string }[];
-    };
-    designModule: {
-      phases?: string[];
-      enrollmentInfo?: { count?: number; type?: string };
-    };
-    contactsLocationsModule: {
-      locations?: {
-        facility?: string;
-        city?: string;
-        state?: string;
-        country?: string;
-        status?: string;
-      }[];
-      centralContacts?: { name?: string; role?: string }[];
-    };
-    conditionsModule?: {
-      conditions?: string[];
-    };
-    eligibilityModule?: {
-      eligibilityCriteria?: string;
-      sex?: string;
-      minimumAge?: string;
-      maximumAge?: string;
-      healthyVolunteers?: boolean;
-      stdAges?: string[];
-    };
-  };
-}
 
 interface StudiesResponse {
   studies: StudyProtocol[];
   nextPageToken?: string;
   totalCount?: number;
 }
-
-interface TrialCardData {
-  nctId: string;
-  briefTitle: string;
-  phase: string;
-  leadSponsor: string;
-  primaryLocation: string;
-  overallStatus: string;
-  conditions?: string[];
-}
-
-export interface ExtractedParams {
-  mutation: string;
-  disease: string;
-  egfr: number | null;
-  platelets: number | null;
-  noBrainMets: boolean;
-  age: number | null;
-  sex: string | null;
-  wbc: number | null;
-  hemoglobin: number | null;
-  creatinine: number | null;
-  alt: number | null;
-  ast: number | null;
-  additionalMutations: string[];
-  reportSummary: string;
-}
-
-export interface PatientProfile {
-  biomarker: string;
-  condition: string;
-  extractedParams: ExtractedParams;
-}
-
-/* ── Preset Patient Data ──────────────────────────────── */
-// NOTE: PRESET_PATIENT was previously defined here as a legacy demo value.
-// It is no longer used — the AI extraction pipeline populates patient data.
-
-/* ── Quick biomarker lookups ────────────────────────── */
-
-const QUICK_LOOKUPS = [
-  { biomarker: "BRCA1 Mutation", condition: "Triple-Negative Breast Cancer" },
-  { biomarker: "PIK3CA H1047R", condition: "Breast Cancer" },
-  { biomarker: "EGFR T790M", condition: "Non-Small Cell Lung Cancer" },
-  { biomarker: "KRAS G12C", condition: "Colorectal Cancer" },
-];
 
 /* ── Helpers ─────────────────────────────────────────── */
 
@@ -115,7 +41,6 @@ interface CleanTerms {
  * and maps the disease to a clean search term.
  */
 function getCleanTerms(biomarker: string, condition: string): CleanTerms {
-  // Biomarker: match known genes, otherwise first word
   let cleanBio = biomarker.trim();
   const knownGenes = ["BRCA1", "PIK3CA", "EGFR", "KRAS", "TP53", "ALK", "ROS1", "BRAF", "HER2"];
   const found = knownGenes.find((g) => cleanBio.toUpperCase().includes(g));
@@ -125,7 +50,6 @@ function getCleanTerms(biomarker: string, condition: string): CleanTerms {
     cleanBio = cleanBio.split(/\s+/)[0] || "";
   }
 
-  // Disease: map to standard short form or fall back to "Solid Tumor"
   let cleanDisease = condition.trim();
   if (/\bbreast\b/i.test(cleanDisease)) cleanDisease = "Breast Cancer";
   else if (/\blung\b/i.test(cleanDisease)) cleanDisease = "Lung Cancer";
@@ -156,9 +80,7 @@ function isValidReport(data: PatientProfile): boolean {
 
 function normalizePhase(phases?: string[]): string {
   if (!phases || phases.length === 0) return "N/A";
-  return phases
-    .map((p) => p.replace("PHASE", "Phase "))
-    .join("/");
+  return phases.map((p) => p.replace("PHASE", "Phase ")).join("/");
 }
 
 function formatLocation(loc?: {
@@ -168,13 +90,11 @@ function formatLocation(loc?: {
   country?: string;
 }): string {
   if (!loc) return "Location not specified";
-  // Format as "Primary Site: City, State/Country"
   const parts: string[] = [];
   if (loc.city) parts.push(loc.city);
   if (loc.state) parts.push(loc.state);
   else if (loc.country) parts.push(loc.country);
-  const locationStr = parts.length > 0 ? `Primary Site: ${parts.join(", ")}` : "Location not specified";
-  return locationStr;
+  return parts.length > 0 ? `Primary Site: ${parts.join(", ")}` : "Location not specified";
 }
 
 function mapStudyToCard(study: StudyProtocol): TrialCardData {
@@ -191,140 +111,15 @@ function mapStudyToCard(study: StudyProtocol): TrialCardData {
   };
 }
 
-/* ── Sub-components ──────────────────────────────────── */
-
-function Header() {
-  return (
-    <header className="sticky top-0 z-50 border-b border-border-subtle backdrop-blur-xl bg-surface/80">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 sm:px-8">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-muted">
-            <Dna className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="font-heading text-xl font-semibold tracking-tight text-text-primary">
-              Aethel Bio
-            </h1>
-            <p className="hidden text-xs text-text-muted sm:block">
-              AI-Powered Biomarker Clinical Trial Matching Workspace
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-text-muted">
-          <Sparkles className="h-3.5 w-3.5 text-accent" />
-          <span className="hidden sm:inline">ClinicalTrials.gov</span>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-function EmptyHero() {
-  return (
-    <div className="flex flex-col items-center justify-center px-4 py-24 text-center sm:py-32">
-      <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-muted">
-        <FlaskConical className="h-8 w-8 text-primary" />
-      </div>
-      <h2 className="font-heading text-2xl font-semibold text-text-primary sm:text-3xl">
-        Search Recruiting Clinical Trials
-      </h2>
-      <p className="mt-3 max-w-lg text-base text-text-secondary">
-        Find actively recruiting oncology trials by genetic biomarker or disease
-        condition. Enter search terms below or use one of the quick lookup buttons
-        to get started.
-      </p>
-      <div className="mt-8 flex items-center gap-2 rounded-lg bg-surface-raised px-4 py-2.5 text-sm text-text-muted">
-        <Search className="h-4 w-4" />
-        <span>Enter a biomarker or condition above to begin</span>
-      </div>
-    </div>
-  );
-}
-
-function SkeletonCard() {
-  return (
-    <div className="animate-shimmer rounded-xl border border-border-subtle bg-surface-raised p-5">
-      <div className="mb-3 h-3 w-28 rounded bg-surface-hover" />
-      <div className="mb-4 h-4 w-full rounded bg-surface-hover" />
-      <div className="mb-4 h-4 w-3/4 rounded bg-surface-hover" />
-      <div className="mb-2 flex gap-2">
-        <div className="h-5 w-20 rounded-full bg-surface-hover" />
-        <div className="h-5 w-24 rounded-full bg-surface-hover" />
-      </div>
-      <div className="mb-1 h-3 w-40 rounded bg-surface-hover" />
-      <div className="h-3 w-48 rounded bg-surface-hover" />
-    </div>
-  );
-}
-
-function TrialCard({
-  trial,
-  index,
-  onSelect,
-}: {
-  trial: TrialCardData;
-  index: number;
-  onSelect: (nctId: string) => void;
-}) {
-  return (
-    <article
-      className="animate-fade-in-up group relative rounded-xl border border-border-subtle bg-surface-raised p-5 shadow-card transition-all duration-200 ease-out hover:border-border-default hover:shadow-card-hover hover:-translate-y-0.5"
-      style={{ animationDelay: `${index * 80}ms` }}
-    >
-      <div className="mb-2 flex items-center justify-between">
-        <span className="font-mono text-xs font-medium text-primary">
-          {trial.nctId}
-        </span>
-        <span className="inline-flex items-center gap-1 rounded-full bg-success-muted px-2.5 py-0.5 text-xs font-semibold text-success">
-          <span className="h-1.5 w-1.5 rounded-full bg-success" />
-          {trial.overallStatus}
-        </span>
-      </div>
-
-      <h3 className="mb-3 line-clamp-2 text-sm font-medium leading-snug text-text-primary">
-        {trial.briefTitle}
-      </h3>
-
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="rounded-md border border-border-subtle bg-surface px-2.5 py-0.5 text-xs font-medium text-text-secondary">
-          {trial.phase}
-        </span>
-        {trial.conditions && trial.conditions.length > 0 && (
-          <span className="text-xs text-text-muted line-clamp-1">
-            {trial.conditions.slice(0, 2).join(", ")}
-            {trial.conditions.length > 2 && " …"}
-          </span>
-        )}
-      </div>
-
-      <div className="mb-1 flex items-center gap-1.5 text-xs text-text-secondary">
-        <svg className="h-3.5 w-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" />
-        </svg>
-        {trial.leadSponsor}
-      </div>
-
-      <div className="mb-4 flex items-center gap-1.5 text-xs text-text-muted">
-        <MapPin className="h-3.5 w-3.5 shrink-0" />
-        {trial.primaryLocation}
-      </div>
-
-      <button
-        onClick={() => onSelect(trial.nctId)}
-        className="mt-auto flex w-full items-center justify-center gap-2 rounded-lg bg-primary-muted px-4 py-2.5 text-sm font-medium text-primary transition-all duration-150 ease-out hover:bg-primary hover:text-white active:scale-[0.98] cursor-pointer"
-      >
-        Select Trial to Analyze
-        <ArrowRight className="h-4 w-4 transition-transform duration-150 group-hover:translate-x-0.5" />
-      </button>
-    </article>
-  );
-}
-
 /* ── Main App ────────────────────────────────────────── */
 
 export default function App() {
+  const [activeView, setActiveView] = useState<ViewKey>("home");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
   const [biomarker, setBiomarker] = useState("");
   const [condition, setCondition] = useState("");
+  const [stage, setStage] = useState<string | null>(null);
   const [trials, setTrials] = useState<TrialCardData[]>([]);
   const [fullStudies, setFullStudies] = useState<StudyProtocol[]>([]);
   const [selectedStudy, setSelectedStudy] = useState<StudyProtocol | null>(null);
@@ -335,166 +130,217 @@ export default function App() {
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [isValidMedicalDoc, setIsValidMedicalDoc] = useState<boolean | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSampleClick = useCallback((bio: string, cond: string) => {
-    setBiomarker(bio);
-    setCondition(cond);
-    setTimeout(() => fetchTrials(bio, cond), 0);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [queryHistory, setQueryHistory] = useState<QueryHistoryEntry[]>([]);
+  const [pathologyHistory, setPathologyHistory] = useState<PathologyHistoryEntry[]>([]);
 
-  const fetchTrials = useCallback(async (bio: string, cond: string) => {
-    if (!bio.trim() && !cond.trim()) {
-      setError("Please enter a biomarker or condition to search.");
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setSearched(true);
-
-    // Clean the input terms using the simple string normaliser
-    const { biomarker: cleanBio, disease: cleanCond } = getCleanTerms(bio, cond);
-
-    try {
-      // Detect TNBC + BRCA1 for specialised query
-      const isTNBCBRCA1 =
-        cleanCond.toLowerCase().includes("triple") &&
-        cleanCond.toLowerCase().includes("breast") &&
-        (cleanBio === "BRCA1" || cleanCond.toLowerCase().includes("brca1"));
-
-      // Build condition query — include both TNBC and broader Breast Cancer for BRCA1/TNBC
-      let condParam = cleanCond;
-      if (isTNBCBRCA1) {
-        condParam = `"Triple-Negative Breast Cancer" OR "Breast Cancer"`;
+  const fetchTrials = useCallback(
+    async (bio: string, cond: string, stageArg: string | null) => {
+      if (!bio.trim() && !cond.trim()) {
+        setError("Please enter a biomarker or condition to search.");
+        return;
       }
+      setLoading(true);
+      setError(null);
+      setSearched(true);
+      setActiveView("matches");
 
-      // Tier 1 — disease + gene (most specific)
-      let url = `https://clinicaltrials.gov/api/v2/studies?query.cond=${encodeURIComponent(condParam)}&query.term=${encodeURIComponent(cleanBio)}&filter.overallStatus=RECRUITING&pageSize=15`;
-      let res = await fetch(url);
-      let data: StudiesResponse = await res.json();
-      let studies = data.studies || [];
+      const { biomarker: cleanBio, disease: cleanCond } = getCleanTerms(bio, cond);
 
-      // Tier 2 — disease only (fallback when Tier 1 returns 0)
-      if (studies.length === 0 && cleanCond) {
-        url = `https://clinicaltrials.gov/api/v2/studies?query.cond=${encodeURIComponent(cleanCond)}&filter.overallStatus=RECRUITING&pageSize=15`;
-        res = await fetch(url);
-        data = await res.json();
-        studies = data.studies || [];
+      try {
+        const isTNBCBRCA1 =
+          cleanCond.toLowerCase().includes("triple") &&
+          cleanCond.toLowerCase().includes("breast") &&
+          (cleanBio === "BRCA1" || cleanCond.toLowerCase().includes("brca1"));
+
+        let condParam = cleanCond;
+        if (isTNBCBRCA1) {
+          condParam = `"Triple-Negative Breast Cancer" OR "Breast Cancer"`;
+        }
+
+        // Tier 1 — disease + gene (most specific)
+        let url = `https://clinicaltrials.gov/api/v2/studies?query.cond=${encodeURIComponent(condParam)}&query.term=${encodeURIComponent(cleanBio)}&filter.overallStatus=RECRUITING&pageSize=15`;
+        let res = await fetch(url);
+        let data: StudiesResponse = await res.json();
+        let studies = data.studies || [];
+
+        // Tier 2 — disease only (fallback when Tier 1 returns 0)
+        if (studies.length === 0 && cleanCond) {
+          url = `https://clinicaltrials.gov/api/v2/studies?query.cond=${encodeURIComponent(cleanCond)}&filter.overallStatus=RECRUITING&pageSize=15`;
+          res = await fetch(url);
+          data = await res.json();
+          studies = data.studies || [];
+        }
+
+        // Tier 3 — gene only (fallback when Tier 2 returns 0)
+        if (studies.length === 0 && cleanBio) {
+          url = `https://clinicaltrials.gov/api/v2/studies?query.term=${encodeURIComponent(cleanBio)}&filter.overallStatus=RECRUITING&pageSize=15`;
+          res = await fetch(url);
+          data = await res.json();
+          studies = data.studies || [];
+        }
+
+        const limitedStudies = studies.slice(0, 15);
+        setFullStudies(limitedStudies);
+        setTrials(limitedStudies.map(mapStudyToCard));
+
+        setQueryHistory((prev) =>
+          [
+            {
+              id: crypto.randomUUID(),
+              biomarker: bio,
+              condition: cond,
+              stage: stageArg,
+              timestamp: new Date().toISOString(),
+              resultCount: limitedStudies.length,
+            },
+            ...prev,
+          ].slice(0, 50),
+        );
+
+        // Unmatched Patient Cohort Registry — only meaningful when we have a
+        // real patient profile with lab metrics to log (i.e. a report was
+        // uploaded, not a plain manual biomarker/condition search).
+        if (patientProfile) {
+          const bestScore =
+            limitedStudies.length > 0
+              ? Math.max(...limitedStudies.map((s) => scoreTrial(s, patientProfile).score))
+              : 0;
+          if (bestScore < UNMATCHED_MATCH_THRESHOLD) {
+            void logUnmatchedCohort({
+              disease: patientProfile.extractedParams.disease,
+              biomarker: patientProfile.extractedParams.mutation,
+              stage: stageArg,
+              labMetrics: {
+                egfr: patientProfile.extractedParams.egfr,
+                platelets: patientProfile.extractedParams.platelets,
+                noBrainMets: patientProfile.extractedParams.noBrainMets,
+              },
+              bestMatchScore: bestScore,
+              trialsConsidered: limitedStudies.length,
+            });
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to fetch trials.";
+        setError(message);
+        setTrials([]);
+      } finally {
+        setLoading(false);
       }
-
-      // Tier 3 — gene only (fallback when Tier 2 returns 0)
-      if (studies.length === 0 && cleanBio) {
-        url = `https://clinicaltrials.gov/api/v2/studies?query.term=${encodeURIComponent(cleanBio)}&filter.overallStatus=RECRUITING&pageSize=15`;
-        res = await fetch(url);
-        data = await res.json();
-        studies = data.studies || [];
-      }
-
-      // Map and set results
-      setFullStudies(studies.slice(0, 15));
-      setTrials(studies.map(mapStudyToCard).slice(0, 15));
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to fetch trials.";
-      setError(message);
-      setTrials([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const handleSearch = useCallback(() => {
-    fetchTrials(biomarker, condition);
-  }, [biomarker, condition, fetchTrials]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") handleSearch();
     },
-    [handleSearch]
+    [patientProfile],
   );
 
-  const handleSelectTrial = useCallback((nctId: string) => {
-    const study = fullStudies.find((s) => s.protocolSection.identificationModule.nctId === nctId);
-    if (study) {
-      setSelectedStudy(study);
-    }
-  }, [fullStudies]);
+  const handleSampleClick = useCallback(
+    (bio: string, cond: string) => {
+      setBiomarker(bio);
+      setCondition(cond);
+      setTimeout(() => fetchTrials(bio, cond, stage), 0);
+    },
+    [fetchTrials, stage],
+  );
 
-  /* ── File upload handler ── */
-  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleSearch = useCallback(() => {
+    fetchTrials(biomarker, condition, stage);
+  }, [biomarker, condition, stage, fetchTrials]);
 
-    // Reset input so the same file can be re-uploaded
-    e.target.value = "";
+  const handleRerunQuery = useCallback(
+    (entry: QueryHistoryEntry) => {
+      setBiomarker(entry.biomarker);
+      setCondition(entry.condition);
+      setStage(entry.stage);
+      setTimeout(() => fetchTrials(entry.biomarker, entry.condition, entry.stage), 0);
+    },
+    [fetchTrials],
+  );
 
-    // File size check — reject files > 10MB
-    if (file.size > 10 * 1024 * 1024) {
-      setError("File too large. Maximum size is 10MB.");
-      return;
-    }
+  const handleSelectTrial = useCallback(
+    (nctId: string) => {
+      const study = fullStudies.find((s) => s.protocolSection.identificationModule.nctId === nctId);
+      if (study) setSelectedStudy(study);
+    },
+    [fullStudies],
+  );
 
-    setUploadedFileName(file.name);
-    setError(null);
-    setExtracting(true);
+  const handleToggleStage = useCallback((s: string) => {
+    setStage((prev) => (prev === s ? null : s));
+  }, []);
 
-    try {
-      // Extract text from the uploaded file
-      const extractedText = await extractFileText(file);
+  /* ── File upload / extraction handler (drag-drop and click-to-browse both call this) ── */
+  const handleFileSelected = useCallback(
+    async (file: File) => {
+      if (file.size > 10 * 1024 * 1024) {
+        setError("File too large. Maximum size is 10MB.");
+        return;
+      }
 
-      // Check extracted text length
-      if (extractedText.trim().length < 20) {
-        setError("Could not extract readable text from this file. Try a different format.");
+      setUploadedFileName(file.name);
+      setError(null);
+      setExtracting(true);
+      const historyId = crypto.randomUUID();
+      const timestamp = new Date().toISOString();
+
+      try {
+        const extractedText = await extractFileText(file);
+
+        if (extractedText.trim().length < 20) {
+          setError("Could not extract readable text from this file. Try a different format.");
+          setPathologyHistory((prev) => [{ id: historyId, fileName: file.name, timestamp, success: false }, ...prev].slice(0, 50));
+          return;
+        }
+
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/extract-patient`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: extractedText }),
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+          throw new Error(result.error || "AI analysis failed");
+        }
+
+        const { data } = result;
+
+        if (!isValidReport(data)) {
+          setIsValidMedicalDoc(false);
+          setError("⚠️ Invalid Document: Uploaded file is not a recognized Pathology or NGS report.");
+          setPatientProfile(null);
+          setBiomarker("");
+          setCondition("");
+          setPathologyHistory((prev) => [{ id: historyId, fileName: file.name, timestamp, success: false }, ...prev].slice(0, 50));
+          return;
+        }
+
+        setIsValidMedicalDoc(true);
+        setPatientProfile(data);
+        setBiomarker(data.biomarker ?? "");
+        setCondition(data.condition ?? "");
+        setPathologyHistory((prev) =>
+          [
+            { id: historyId, fileName: file.name, timestamp, success: true, biomarker: data.biomarker, disease: data.condition },
+            ...prev,
+          ].slice(0, 50),
+        );
+
+        setTimeout(() => fetchTrials(data.biomarker ?? "", data.condition ?? "", stage), 0);
+      } catch {
+        setError("AI analysis failed. Please try again or enter data manually.");
+        setPathologyHistory((prev) => [{ id: historyId, fileName: file.name, timestamp, success: false }, ...prev].slice(0, 50));
+      } finally {
         setExtracting(false);
-        return;
       }
+    },
+    [fetchTrials, stage],
+  );
 
-      // Send text to the Edge Function
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/extract-patient`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: extractedText }),
-      });
-
-      const result = await response.json();
-
-      if (!result.success) {
-        throw new Error(result.error || "AI analysis failed");
-      }
-
-      const { data } = result;
-
-      // Validate that the extraction produced meaningful biomarker/disease data
-      if (!isValidReport(data)) {
-        setIsValidMedicalDoc(false);
-        setError("⚠️ Invalid Document: Uploaded file is not a recognized Pathology or NGS report.");
-        setPatientProfile(null);
-        setBiomarker("");
-        setCondition("");
-        return;
-      }
-
-      setIsValidMedicalDoc(true);
-
-      // Set the patient profile with AI-extracted data
-      setPatientProfile(data);
-      setBiomarker(data.biomarker ?? "");
-      setCondition(data.condition ?? "");
-
-      // Auto-search trials with the extracted biomarker and condition
-      setTimeout(() => fetchTrials(data.biomarker ?? "", data.condition ?? ""), 0);
-    } catch (err) {
-      setError("AI analysis failed. Please try again or enter data manually.");
-    } finally {
-      setExtracting(false);
-    }
-  }, [fetchTrials]);
-
-  /* ── Reset workspace ── */
+  /* ── Reset workspace (keeps session history intact) ── */
   const handleReset = useCallback(() => {
     setBiomarker("");
     setCondition("");
+    setStage(null);
     setPatientProfile(null);
     setUploadedFileName(null);
     setIsValidMedicalDoc(null);
@@ -516,232 +362,71 @@ export default function App() {
   }, [selectedStudy]);
 
   return (
-    <div className="min-h-screen bg-aethel-glow">
-      <Header />
+    <div className="flex h-screen overflow-hidden bg-surface">
+      <Sidebar
+        active={activeView}
+        onNavigate={setActiveView}
+        matchCount={trials.length}
+        mobileOpen={mobileNavOpen}
+        onCloseMobile={() => setMobileNavOpen(false)}
+      />
 
-      <main className="mx-auto max-w-7xl px-4 pb-16 sm:px-6 lg:px-8">
-        {/* ── Search Zone ── */}
-        <section className="border-b border-border-subtle pb-8 pt-8 sm:pt-12">
-          <div className="mx-auto max-w-2xl">
-            {/* Biomarker */}
-            <div className="mb-4">
-              <label htmlFor="biomarker" className="mb-1.5 block text-sm font-medium text-text-secondary">
-                Biomarker / Mutation
-              </label>
-              <div className="relative">
-                <Dna className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-                <input
-                  id="biomarker"
-                  type="text"
-                  placeholder='e.g., "BRCA1", "EGFR T790M", "KRAS G12C"'
-                  value={biomarker}
-                  onChange={(e) => setBiomarker(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  className="w-full rounded-xl border border-border-subtle bg-surface-raised py-3 pl-10 pr-4 text-sm text-text-primary placeholder:text-text-muted/60 transition-colors duration-150 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
-                />
-              </div>
-            </div>
-
-            {/* Condition */}
-            <div className="mb-5">
-              <label htmlFor="condition" className="mb-1.5 block text-sm font-medium text-text-secondary">
-                Disease / Condition
-              </label>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-                <input
-                  id="condition"
-                  type="text"
-                  placeholder='e.g., "Triple-Negative Breast Cancer", "Lung Cancer"'
-                  value={condition}
-                  onChange={(e) => setCondition(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  className="w-full rounded-xl border border-border-subtle bg-surface-raised py-3 pl-10 pr-4 text-sm text-text-primary placeholder:text-text-muted/60 transition-colors duration-150 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
-                />
-              </div>
-            </div>
-
-            {/* Quick biomarker lookups */}
-            <div className="mb-5">
-              <p className="mb-2 text-xs font-medium text-text-muted">
-                Common Biomarkers
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {QUICK_LOOKUPS.map((s) => (
-                  <button
-                    key={s.biomarker}
-                    onClick={() => handleSampleClick(s.biomarker, s.condition)}
-                    className="rounded-lg border border-border-subtle bg-surface-raised px-3.5 py-2 text-xs font-medium text-text-secondary transition-all duration-150 hover:border-primary/40 hover:bg-primary-muted hover:text-primary active:scale-[0.97] cursor-pointer"
-                  >
-                    {s.biomarker}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* ── PDF Upload / Preset Section ── */}
-            <div className="mb-5 rounded-xl border border-accent/25 bg-accent-muted/10 p-4">
-              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-accent">
-                <FileText className="h-4 w-4" />
-                <span>Patient Record & Pathology Processing</span>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3">
-                {/* Hidden file input */}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf,.txt,.docx,.doc"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                  aria-label="Upload pathology or NGS report"
-                />
-
-                {/* Upload button — single primary upload action */}
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={extracting}
-                  className="inline-flex items-center gap-2 rounded-lg border border-border-subtle bg-surface-raised px-4 py-2.5 text-sm font-medium text-text-secondary transition-all duration-150 hover:border-accent/40 hover:bg-accent-muted/20 hover:text-accent active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-                >
-                  {extracting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Upload className="h-4 w-4" />
-                  )}
-                  {extracting ? "Analyzing report…" : "Upload Pathology / NGS Report (.pdf, .txt, .docx)"}
-                </button>
-              </div>
-
-              {/* Uploaded file indicator — only for actual file uploads */}
-              {uploadedFileName && (
-                <div className="mt-3 flex items-center gap-2 rounded-lg bg-surface-raised px-3.5 py-2 text-xs text-text-secondary">
-                  <FileText className="h-3.5 w-3.5 text-accent" />
-                  <span className="flex-1 truncate">{uploadedFileName}</span>
-                  {extracting ? (
-                    <span className="flex items-center gap-1.5 text-text-muted">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Analyzing…
-                    </span>
-                  ) : patientProfile ? (
-                    <span className="text-accent font-medium">
-                      ✓ Extracted
-                    </span>
-                  ) : isValidMedicalDoc === false ? (
-                    <span className="text-destructive font-medium">
-                      ❌ Invalid Report
-                    </span>
-                  ) : null}
-                </div>
-              )}
-
-              </div>
-
-            {/* ── Search row: Search + Reset buttons ── */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {/* ── Top bar ── */}
+        <header className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-surface/80 px-4 py-3.5 backdrop-blur-xl sm:px-6">
           <div className="flex items-center gap-3">
             <button
-              onClick={handleSearch}
-              disabled={loading}
-              className="flex flex-1 items-center justify-center gap-2.5 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white shadow-glow transition-all duration-150 hover:bg-primary-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+              onClick={() => setMobileNavOpen(true)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-surface-hover hover:text-text-primary lg:hidden cursor-pointer"
+              aria-label="Open navigation"
             >
-              {loading ? (
-                <>
-                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Searching…
-                </>
-              ) : (
-                <>
-                  <Search className="h-4 w-4" />
-                  Search Clinical Trials
-                </>
-              )}
+              <Menu className="h-4 w-4" />
             </button>
-
-            <button
-              onClick={handleReset}
-              disabled={loading}
-              className="inline-flex items-center gap-2 rounded-xl border border-border-subtle bg-surface-raised px-4 py-3 text-sm font-medium text-text-secondary transition-all duration-150 hover:border-destructive/40 hover:bg-destructive-muted/20 hover:text-destructive active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-            >
-              <RotateCcw className="h-4 w-4" />
-              <span className="hidden sm:inline">Reset Workspace</span>
-            </button>
+            <h1 className="font-heading text-base font-semibold text-text-primary">{VIEW_TITLES[activeView]}</h1>
           </div>
+          <div className="hidden items-center gap-2 text-xs text-text-muted sm:flex">
+            <Sparkles className="h-3.5 w-3.5 text-accent" />
+            ClinicalTrials.gov
           </div>
-        </section>
+        </header>
 
-        {/* ── Error ── */}
-        {error && (
-          <div className="mx-auto mt-6 flex max-w-2xl items-center gap-3 rounded-xl bg-destructive-muted px-5 py-3 text-sm text-destructive">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{error}</span>
-            <button
-              onClick={() => setError(null)}
-              className="ml-auto text-xs font-medium underline-offset-2 hover:underline cursor-pointer"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-
-        {/* ── Results Section ── */}
-        <section className="mt-8">
-          {/* Loading skeletons */}
-          {loading && (
-            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <SkeletonCard key={i} />
-              ))}
-            </div>
+        {/* ── Active view ── */}
+        <main className="flex-1 overflow-y-auto">
+          {activeView === "home" && (
+            <HomeView
+              biomarker={biomarker}
+              onBiomarkerChange={setBiomarker}
+              condition={condition}
+              onConditionChange={setCondition}
+              stage={stage}
+              onToggleStage={handleToggleStage}
+              patientProfile={patientProfile}
+              uploadedFileName={uploadedFileName}
+              extracting={extracting}
+              isValidMedicalDoc={isValidMedicalDoc}
+              onSampleClick={handleSampleClick}
+              onFileSelected={handleFileSelected}
+              onSearch={handleSearch}
+              onReset={handleReset}
+              loading={loading}
+            />
           )}
-
-          {/* Results grid */}
-          {!loading && trials.length > 0 && (
-            <>
-              <div className="mb-5 flex items-center justify-between">
-                <h2 className="font-heading text-lg font-semibold text-text-primary">
-                  Recruiting Trials
-                </h2>
-                <span className="text-xs text-text-muted">
-                  {trials.length} result{trials.length !== 1 ? "s" : ""}
-                </span>
-              </div>
-              <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                {trials.map((trial, i) => (
-                  <TrialCard
-                    key={trial.nctId}
-                    trial={trial}
-                    index={i}
-                    onSelect={handleSelectTrial}
-                  />
-                ))}
-              </div>
-            </>
+          {activeView === "matches" && (
+            <MatchesView
+              loading={loading}
+              trials={trials}
+              searched={searched}
+              error={error}
+              onDismissError={() => setError(null)}
+              onSelectTrial={handleSelectTrial}
+            />
           )}
-
-          {/* Empty state (no results but searched) */}
-          {!loading && searched && trials.length === 0 && !error && (
-            <div className="mt-12 flex flex-col items-center justify-center px-4 text-center">
-              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-raised">
-                <Search className="h-6 w-6 text-text-muted" />
-              </div>
-              <h3 className="font-heading text-lg font-medium text-text-primary">
-                No recruiting trials found
-              </h3>
-              <p className="mt-2 max-w-md text-sm text-text-secondary">
-                Try broadening your search terms, using a different biomarker, or
-                checking the condition name.
-              </p>
-            </div>
-          )}
-
-          {/* Initial hero / empty state */}
-          {!searched && !loading && (
-            <EmptyHero />
-          )}
-        </section>
-      </main>
+          {activeView === "queries" && <QueriesView history={queryHistory} onRerun={handleRerunQuery} />}
+          {activeView === "pathology" && <PathologyView history={pathologyHistory} />}
+          {activeView === "unmatched" && <UnmatchedRegistryView />}
+          {activeView === "settings" && <SettingsView />}
+        </main>
+      </div>
 
       {/* ── Trial Match Simulator Drawer ── */}
       {selectedStudy && (

@@ -1,54 +1,20 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { jsPDF } from "jspdf";
-import { X, ArrowLeft, CheckCircle, AlertTriangle, Plus, Trash2, Gauge, ChevronDown, ChevronUp, Dna, Stethoscope, Beaker, Brain, FlaskConical, Copy, Check, FileText, Loader2, MapPin } from "lucide-react";
+import { X, ArrowLeft, CheckCircle, AlertTriangle, Plus, Trash2, Gauge, ChevronDown, ChevronUp, Dna, Stethoscope, Beaker, Brain, FlaskConical, Copy, Check, FileText, Loader2, MapPin, Info } from "lucide-react";
+import {
+  type ParsedCriteria,
+  parseEligibilityCriteria,
+  autoMatchInclusion,
+  autoMatchExclusion,
+  computeOrganMismatch,
+  computeBreastOvarianMismatch,
+  computeInclusionScore,
+  getMatchCategory,
+  getGaugeColor,
+} from "./trialScoring";
+import type { StudyProtocol, PatientProfile } from "./types";
 
 /* ── Types ─────────────────────────────────────────── */
-
-interface EligibilityModule {
-  eligibilityCriteria?: string;
-  sex?: string;
-  minimumAge?: string;
-  maximumAge?: string;
-  healthyVolunteers?: boolean;
-  stdAges?: string[];
-}
-
-interface StudyProtocol {
-  protocolSection: {
-    identificationModule: {
-      nctId: string;
-      briefTitle: string;
-      officialTitle?: string;
-    };
-    statusModule: {
-      overallStatus: string;
-    };
-    sponsorCollaboratorsModule: {
-      leadSponsor: { name: string };
-    };
-    designModule: {
-      phases?: string[];
-    };
-    conditionsModule?: {
-      conditions?: string[];
-    };
-    contactsLocationsModule?: {
-      locations?: {
-        facility?: string;
-        city?: string;
-        state?: string;
-        country?: string;
-        status?: string;
-      }[];
-    };
-    eligibilityModule?: EligibilityModule;
-  };
-}
-
-interface ParsedCriteria {
-  inclusion: string[];
-  exclusion: string[];
-}
 
 interface CustomRule {
   id: string;
@@ -57,75 +23,10 @@ interface CustomRule {
   required?: boolean;
 }
 
-interface ExtractedParams {
-  mutation: string;
-  disease: string;
-  egfr: number | null;
-  platelets: number | null;
-  noBrainMets: boolean;
-  age: number | null;
-  sex: string | null;
-  wbc: number | null;
-  hemoglobin: number | null;
-  creatinine: number | null;
-  alt: number | null;
-  ast: number | null;
-  additionalMutations: string[];
-  reportSummary: string;
-  pik3ca: string;
-  tp53: string;
-  tmb: string | null;
-  priorTreatments: string[];
-}
-
-interface PatientProfile {
-  biomarker: string;
-  condition: string;
-  extractedParams: ExtractedParams;
-}
-
 interface SimulatorProps {
   study: StudyProtocol;
   patientProfile?: PatientProfile;
   onClose: () => void;
-}
-
-/* ── Match category helpers ────────────────────────── */
-
-function getMatchCategory(score: number): {
-  label: string;
-  color: string;
-  bg: string;
-  border: string;
-} {
-  if (score >= 80) {
-    return {
-      label: "High Candidate Match",
-      color: "text-success",
-      bg: "bg-success-muted",
-      border: "border-success/30",
-    };
-  }
-  if (score >= 50) {
-    return {
-      label: "Moderate Candidate Match",
-      color: "text-warning",
-      bg: "bg-warning-muted",
-      border: "border-warning/30",
-    };
-  }
-  return {
-    label: "Low Candidate Match",
-    color: "text-destructive",
-    bg: "bg-destructive-muted",
-    border: "border-destructive/30",
-  };
-}
-
-function getGaugeColor(score: number): string {
-  if (score >= 80) return "stroke-success";
-  if (score >= 50) return "stroke-warning";
-  return "stroke-destructive";
 }
 
 /* ── OCR / text normalisation for outreach ──────────── */
@@ -134,186 +35,6 @@ function normalizeMutationForOutreach(text: string): string {
   return text
     .replace(/p\.\s*Gin\b/g, "p.Gln")                    // "p. Gin" → "p.Gln"
     .replace(/(Profs)\s+(\d+)/g, "$1*$2");               // "Profs 74" → "Profs*74"
-}
-
-/* ── Eligibility text parser ────────────────────────── */
-
-function parseEligibilityCriteria(text?: string): ParsedCriteria {
-  if (!text || text.trim().length === 0) {
-    return { inclusion: [], exclusion: [] };
-  }
-
-  const lower = text;
-  const hasInclusion = /inclusion\s*criteria/i.test(lower);
-  const hasExclusion = /exclusion\s*criteria/i.test(lower);
-
-  let inclusionPart = "";
-  let exclusionPart = "";
-
-  if (hasInclusion && hasExclusion) {
-    const split = lower.split(/exclusion\s*criteria\s*:?\s*/i);
-    inclusionPart = split[0].replace(/inclusion\s*criteria\s*:?\s*/i, "").trim();
-    exclusionPart = (split[1] || "").trim();
-  } else if (hasInclusion) {
-    inclusionPart = lower.replace(/inclusion\s*criteria\s*:?\s*/i, "").trim();
-  } else if (hasExclusion) {
-    exclusionPart = lower.replace(/exclusion\s*criteria\s*:?\s*/i, "").trim();
-  } else {
-    inclusionPart = lower.trim();
-  }
-
-  const extractItems = (text: string): string[] =>
-    text
-      .split("\n")
-      .map((line) =>
-        line
-          .replace(/^[\s•\-‣▪▸→*]+/, "")
-          .replace(/^\d+[\.\)]\s*/, "")
-          .trim()
-      )
-      .filter((line) => {
-        if (line.length <= 3) return false;
-        if (/^\s*$/.test(line)) return false;
-        if (/^(inclusion|exclusion)\s*criteria\s*:?\s*$/i.test(line)) return false;
-        if (/^include\s*:?\s*$/i.test(line)) return false;
-        if (/^exclude\s*:?\s*$/i.test(line)) return false;
-        if (/^[^a-z0-9]*[a-z\s]+\s*:\s*$/i.test(line) && line.length < 40) return false;
-        return true;
-      });
-
-  return {
-    inclusion: extractItems(inclusionPart),
-    exclusion: extractItems(exclusionPart),
-  };
-}
-
-/* ── Auto-matching logic ─────────────────────────────── */
-
-function autoMatchInclusion(
-  items: string[],
-  patient: PatientProfile,
-): Record<number, boolean> {
-  const map: Record<number, boolean> = {};
-  const { mutation, disease, egfr, platelets } = patient.extractedParams;
-  const diseaseLower = disease.toLowerCase();
-
-  // Detect if the patient has Triple-Negative Breast Cancer
-  const isTripleNegative =
-    diseaseLower.includes("triple") &&
-    diseaseLower.includes("negative") &&
-    diseaseLower.includes("breast");
-
-  // Build keyword set from the patient profile
-  const mutParts = mutation.toLowerCase().split(/\s+/);
-  const diseaseParts = diseaseLower.split(/\s+/);
-  // Extract key disease terms: "triple-negative" → "triple", "negative", "triple-negative"
-  // "breast cancer" → "breast", "cancer"
-  const diseaseKeywords = diseaseParts
-    .map((p) => p.replace(/[^a-z0-9-]/g, ""))
-    .filter((p) => p.length > 2);
-
-  // Also add compound terms
-  const compoundTerms: string[] = [];
-  for (let i = 0; i < diseaseParts.length - 1; i++) {
-    const compound = `${diseaseParts[i]}-${diseaseParts[i + 1]}`;
-    if (compound.length > 3) compoundTerms.push(compound);
-  }
-
-  const keywords = [
-    ...mutParts.filter((p) => p.length > 2),
-    mutation.toLowerCase(),
-    ...diseaseKeywords,
-    ...compoundTerms,
-    // Abbreviations
-    "tnbc",
-    "brca",
-  ];
-
-  items.forEach((item, i) => {
-    const lower = item.toLowerCase();
-
-    // ── TNBC-specific: HR+ or Hormone Receptor Positive → automatically Failed ──
-    if (
-      isTripleNegative &&
-      /hr\s*\+|hr\s*positive|hormone\s*receptor\s*positive|estrogen\s*receptor\s*positive|progesterone\s*receptor\s*positive/i.test(
-        lower,
-      )
-    ) {
-      map[i] = false;
-      return;
-    }
-
-    // Check for mutation match
-    const matchesMutation = keywords.some(
-      (k) => k.length > 2 && lower.includes(k),
-    );
-
-    // Check for lab value match (e.g. "eGFR > 60" — patient eGFR 74 qualifies)
-    const hasEGFR = /egfr|gfr|creatinine|renal\s*function/.test(lower);
-    const egfrMatch = hasEGFR && egfr !== null && egfr >= 60;
-
-    const hasPlatelets = /platelet|thrombocyte|hematologic/.test(lower);
-    const plateletMatch = hasPlatelets && platelets !== null && platelets >= 100;
-
-    // Broad match for "breast cancer" or "solid tumor" — assume patient qualifies
-    const broadMatch =
-      /breast\s*cancer|solid\s*tumor|advanced\s*malignancy|metastatic\s*cancer/i.test(
-        lower,
-      ) && diseaseLower.includes("cancer");
-
-    // BRCA1/2 mutation criteria — match patient's mutation type
-    const brcaMatch =
-      /brca1\s*\/?\s*2\s*mutation|brca\s*mutation|homologous\s*recombination/i.test(
-        lower,
-      ) && mutation.toLowerCase().includes("brca");
-
-    // General criteria — lab access, consent, histology — auto-satisfied
-    const generalMatch =
-      /informed\s*consent|medical\s*record|archival\s*tissue|histologically\s*confirmed|life\s*expectancy|ecog\s*0|ecog\s*1|measurable\s*disease/i.test(
-        lower,
-      );
-
-    map[i] = matchesMutation || egfrMatch || plateletMatch || broadMatch || brcaMatch || generalMatch;
-  });
-
-  return map;
-}
-
-function autoMatchExclusion(
-  items: string[],
-  patient: PatientProfile,
-): Record<number, boolean> {
-  // Start with all exclusion criteria unchecked (meaning patient doesn't satisfy them)
-  // We auto-CHECK items that DO apply to the patient so they affect the score negatively
-  const map: Record<number, boolean> = {};
-  const { noBrainMets, egfr, platelets } = patient.extractedParams;
-
-  items.forEach((item, i) => {
-    const lower = item.toLowerCase();
-
-    // If item mentions active brain metastases and patient has no brain mets → NOT excluded
-    if (/brain\s*metasta|brain\s*tumor|cns\s*metasta/.test(lower) && noBrainMets) {
-      map[i] = false; // patient does NOT satisfy this exclusion = good
-      return;
-    }
-
-    // If item mentions eGFR < 30 or renal impairment, but patient eGFR is 74 → NOT excluded
-    if (/egfr\s*<\s*30|dialysis|renal\s*failure/.test(lower) && egfr !== null && egfr >= 60) {
-      map[i] = false;
-      return;
-    }
-
-    // If item mentions platelets < 100K but patient has 185K → NOT excluded
-    if (/platelet.*<\s*100|thrombocytopenia/.test(lower) && platelets !== null && platelets >= 100) {
-      map[i] = false;
-      return;
-    }
-
-    // Default: leave unchecked (not applicable)
-    map[i] = false;
-  });
-
-  return map;
 }
 
 /* ── Circular Gauge ──────────────────────────────────── */
@@ -669,7 +390,9 @@ function ReferralSummaryModal({
     "────────────────────────────────────────────",
     `Match Score: ${Math.round(score)}% — ${cat.label}`,
     `Inclusion criteria satisfied: ${checkedInclusionCount} / ${criteria.inclusion.length}`,
-    `Exclusion criteria cleared: ${uncheckedExclusionCount} / ${criteria.exclusion.length}`,
+    criteria.exclusion.length > 0
+      ? `Exclusion criteria cleared: ${uncheckedExclusionCount} / ${criteria.exclusion.length}`
+      : `Exclusion criteria: none listed on ClinicalTrials.gov — not penalized`,
     `Custom lab rules satisfied: ${satisfiedCustomCount} / ${customRules.length}`,
     "",
     "────────────────────────────────────────────",
@@ -931,7 +654,11 @@ function ReferralSummaryModal({
       };
       statRow("Inclusion criteria satisfied", `${checkedInc} / ${criteria.inclusion.length}`, y);
       y += 7;
-      statRow("Exclusion criteria cleared", `${uncheckedExc} / ${criteria.exclusion.length}`, y);
+      statRow(
+        "Exclusion criteria cleared",
+        criteria.exclusion.length > 0 ? `${uncheckedExc} / ${criteria.exclusion.length}` : "None listed — not penalized",
+        y,
+      );
       y += 7;
       statRow("Custom lab rules satisfied", `${satisfiedCust} / ${customRules.length}`, y);
       y += 9;
@@ -942,7 +669,10 @@ function ReferralSummaryModal({
           `Core Criteria Checklist — Inclusion (${checkedInc}/${criteria.inclusion.length})`,
           y,
         );
-        for (let i = 0; i < criteria.inclusion.length; i++) {
+        // Only the top 3 items are rendered on Page 1 so long text blocks never
+        // overlap or clip at the bottom page footer.
+        const page1Inclusion = criteria.inclusion.slice(0, 3);
+        for (let i = 0; i < page1Inclusion.length; i++) {
           // Early page break: if the current item would push y close to the 260mm safe zone, wrap early
           if (y > 260) {
             pdf.addPage();
@@ -961,7 +691,7 @@ function ReferralSummaryModal({
           pdf.setFont("helvetica", "normal");
           pdf.setTextColor(TEXT_WHITE[0], TEXT_WHITE[1], TEXT_WHITE[2]);
           const criterionWidth = CW - 8; // 180 - 8mm for icon offset
-          const lines = pdf.splitTextToSize(criteria.inclusion[i], criterionWidth);
+          const lines = pdf.splitTextToSize(page1Inclusion[i], criterionWidth);
           pdf.text(lines, M + 6, y);
           // Advance yPos by number of wrapped lines (each ~3.5mm with 1.35 line height)
           y += 2 + lines.length * 3.5;
@@ -1194,7 +924,9 @@ function ReferralSummaryModal({
                 <div className="flex items-center justify-between rounded-lg bg-surface px-3 py-2">
                   <span className="text-text-secondary">Exclusion criteria cleared</span>
                   <span className="font-medium text-text-primary">
-                    {uncheckedExclusionCount} / {criteria.exclusion.length}
+                    {criteria.exclusion.length > 0
+                      ? `${uncheckedExclusionCount} / ${criteria.exclusion.length}`
+                      : "None listed — not penalized"}
                   </span>
                 </div>
                 <div className="flex items-center justify-between rounded-lg bg-surface px-3 py-2">
@@ -1342,28 +1074,14 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
   /* ── Detect organ system mismatch ── */
   const isOrganMismatch = useMemo(() => {
     if (!patientProfile) return false;
-    const studyConditions = p.conditionsModule?.conditions || [];
-    const patientDisease = patientProfile.extractedParams.disease.toLowerCase();
-    const organKeywords = ["breast", "lung", "prostate", "colorect", "pancrea", "ovari", "endometri",
-      "liver", "hepatocell", "gastric", "stomach", "melanoma", "glioblastoma", "glioma",
-      "bladder", "renal", "head", "neck", "sarcoma", "leukemia", "lymphoma", "myeloma",
-      "ovarian", "kidney", "colon", "rectal", "esophageal", "cervical", "thyroid"];
-    const patientOrgan = organKeywords.find((k) => patientDisease.includes(k));
+    return computeOrganMismatch(p, patientProfile);
+  }, [patientProfile, p]);
 
-    if (patientOrgan && studyConditions.length > 0) {
-      const hasMatchingOrgan = studyConditions.some((c) => {
-        const cl = c.toLowerCase();
-        return cl.includes(patientOrgan) ||
-               (patientOrgan === "breast" && cl.includes("breast")) ||
-               (patientOrgan === "lung" && cl.includes("lung")) ||
-               (patientOrgan === "colorect" && (cl.includes("colon") || cl.includes("rectal") || cl.includes("colorect")));
-      });
-      if (!hasMatchingOrgan) {
-        return true; // hard fail — disease organ mismatch
-      }
-    }
-    return false;
-  }, [patientProfile, p.conditionsModule]);
+  /* ── Detect breast/ovarian organ system mismatch (hard gate) ── */
+  const isBreastOvarianMismatch = useMemo(() => {
+    if (!patientProfile) return false;
+    return computeBreastOvarianMismatch(p, patientProfile);
+  }, [patientProfile, p]);
 
   /* ── Auto-match when patient profile is provided ── */
   useEffect(() => {
@@ -1425,27 +1143,31 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
     // Organ system mismatch — handled by isOrganMismatch (which controls cat label)
     if (isOrganMismatch) return false;
 
+    // Breast/ovarian organ system mismatch — hard fail, score forced to 0
+    if (isBreastOvarianMismatch) return false;
+
     // Mandatory exclusion violation — if any exclusion criterion applies to the patient, hard fail
     const hasActiveExclusion = criteria.exclusion.some((_, i) => exclusionMap[i] === true);
     if (hasActiveExclusion) return false;
 
     return true;
-  }, [isOrganMismatch, criteria, exclusionMap]);
+  }, [isOrganMismatch, isBreastOvarianMismatch, criteria, exclusionMap]);
+
+  // Trials with zero ClinicalTrials.gov exclusion rules are never penalized —
+  // hasActiveExclusion above is always false for an empty exclusion array.
+  const exclusionCriteriaPresent = criteria.exclusion.length > 0;
 
   const score = useMemo(() => {
     if (!hardGatePassed) return 0;
+    if (criteria.inclusion.length === 0) return 0;
 
-    const totalInclusion = criteria.inclusion.length;
-    if (totalInclusion === 0) return 0;
-
-    const checkedInclusion = criteria.inclusion.filter((_, i) => inclusionMap[i]).length;
-
-    // Score = pure inclusion ratio — how many inclusion criteria are satisfied
-    return Math.round((checkedInclusion / totalInclusion) * 100);
-  }, [hardGatePassed, criteria.inclusion, inclusionMap]);
+    // Weighted score: criteria naming a molecular subtype the patient actually
+    // has (TNBC, HR+/-, HER2+/-) count double toward the match.
+    return computeInclusionScore(criteria.inclusion, inclusionMap, patientProfile);
+  }, [hardGatePassed, criteria.inclusion, inclusionMap, patientProfile]);
 
   const cat = useMemo(() => {
-    if (isOrganMismatch) {
+    if (isOrganMismatch || isBreastOvarianMismatch) {
       return {
         label: "Ineligible / Organ System Mismatch",
         color: "text-destructive",
@@ -1462,7 +1184,7 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
       };
     }
     return getMatchCategory(score);
-  }, [isOrganMismatch, hardGatePassed, score]);
+  }, [isOrganMismatch, isBreastOvarianMismatch, hardGatePassed, score]);
 
   return (
     <>
@@ -1509,7 +1231,7 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
           </section>
 
           {/* Hard Gate Warning Banner — Organ Mismatch */}
-          {patientProfile && isOrganMismatch && (
+          {patientProfile && (isOrganMismatch || isBreastOvarianMismatch) && (
             <div className="rounded-xl border border-destructive/30 bg-destructive-muted p-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-destructive">
                 <AlertTriangle className="h-4 w-4" />
@@ -1522,7 +1244,7 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
           )}
 
           {/* Hard Gate Warning Banner — Other Failure */}
-          {patientProfile && !isOrganMismatch && !hardGatePassed && (
+          {patientProfile && !isOrganMismatch && !isBreastOvarianMismatch && !hardGatePassed && (
             <div className="rounded-xl border border-destructive/30 bg-destructive-muted p-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-destructive">
                 <AlertTriangle className="h-4 w-4" />
@@ -1594,7 +1316,7 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
           )}
 
           {/* Exclusion Criteria */}
-          {criteria.exclusion.length > 0 && (
+          {exclusionCriteriaPresent ? (
             <section>
               <CriteriaSection
                 title="Exclusion Criteria"
@@ -1607,6 +1329,11 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
                 accentColor="text-destructive"
               />
             </section>
+          ) : (
+            <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-surface-raised/50 px-3.5 py-2.5 text-xs text-text-muted">
+              <Info className="h-3.5 w-3.5 shrink-0 text-accent" />
+              No exclusion criteria listed on ClinicalTrials.gov for this trial — not counted against the match score.
+            </div>
           )}
 
           {/* Custom Rules */}
