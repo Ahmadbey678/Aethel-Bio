@@ -12,7 +12,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
-import { supabase, isAdminSession, isPermissionDenied } from "../utils/supabaseClient";
+import { supabase, isAdminSession, isPermissionDenied, onAuthStateChange } from "../utils/supabaseClient";
 import type { UnmatchedPatientRow } from "../cohortRegistry";
 import AuthModal from "../components/AuthModal";
 
@@ -108,7 +108,9 @@ export default function UnmatchedRegistryView() {
     }
   }, []);
 
-  /* Resolve the auth session first, then fetch records when admin. */
+  /* Resolve the auth session first (re-validating the JWT via `getUser()`),
+     then fetch records when admin. Listens to the app-wide auth state so the
+     view reacts to sign-in / sign-out from anywhere (e.g. the AuthModal). */
   useEffect(() => {
     if (!supabase) {
       setSessionChecked(true);
@@ -122,9 +124,13 @@ export default function UnmatchedRegistryView() {
 
     const resolve = async () => {
       const {
-        data: { session: current },
-      } = await client.auth.getSession();
+        data: { user },
+      } = await client.auth.getUser();
       if (!active) return;
+      /* `getUser()` re-validates the token server-side; `user` is null when
+         the session is missing/expired. Build a minimal view of the session
+         from the user record so role checks keep working. */
+      const current = user ? ({ user } as Session) : null;
       setSession(current);
       setSessionChecked(true);
       if (isAdminSession(current)) {
@@ -136,9 +142,7 @@ export default function UnmatchedRegistryView() {
 
     void resolve();
 
-    const {
-      data: { subscription },
-    } = client.auth.onAuthStateChange((_event, nextSession) => {
+    const unsubscribe = onAuthStateChange((nextSession) => {
       if (!active) return;
       setSession(nextSession);
       if (isAdminSession(nextSession)) {
@@ -154,7 +158,7 @@ export default function UnmatchedRegistryView() {
 
     return () => {
       active = false;
-      subscription.unsubscribe();
+      unsubscribe();
     };
   }, [loadRecords]);
 
