@@ -7,7 +7,7 @@ import { scoreTrial } from "./trialScoring";
 import { logUnmatchedCohort, UNMATCHED_MATCH_THRESHOLD } from "./cohortRegistry";
 import { supabase, onAuthStateChange } from "./utils/supabaseClient";
 import AuthModal from "./components/AuthModal";
-import LockScreen from "./components/LockScreen";
+import AuthLandingView from "./components/AuthLandingView";
 import Sidebar, { VIEW_TITLES, type ViewKey } from "./components/Sidebar";
 import HomeView from "./views/HomeView";
 import MatchesView from "./views/MatchesView";
@@ -378,7 +378,7 @@ export default function App() {
      synchronously by `onAuthStateChange`), then keep the whole workspace in
      sync with sign-in / sign-out from anywhere (e.g. the AuthModal). When the
      session goes null (sign-out, expiry), the workspace is replaced by the
-     LockScreen. */
+     AuthLandingView. */
   useEffect(() => {
     if (!supabase) {
       /* Dev mode without Supabase: skip the gate so the demo stays usable. */
@@ -439,7 +439,7 @@ export default function App() {
   }, []);
 
   /* ── Guest mode (demo access) ──────────────────────────────────────────
-     Entering guest mode replaces the LockScreen with the workspace. The
+     Entering guest mode replaces the AuthLandingView with the workspace. The
      session stays null, so the sidebar renders the Guest User (Demo Mode)
      badge and restricts navigation to Home + Matches. */
   const handleContinueAsGuest = useCallback(() => {
@@ -448,7 +448,7 @@ export default function App() {
     setMobileNavOpen(false);
   }, []);
 
-  /* ── Exit guest mode → back to the LockScreen ── */
+  /* ── Exit guest mode → back to the AuthLandingView ── */
   const handleExitGuest = useCallback(() => {
     setIsGuest(false);
     setActiveView("home");
@@ -487,7 +487,7 @@ export default function App() {
         console.error("Sign out error:", error.message);
         return;
       }
-      /* `onAuthStateChange` flips the session to null → LockScreen. */
+      /* `onAuthStateChange` flips the session to null → AuthLandingView. */
     } catch {
       setSignOutError("We couldn't sign you out. Please try again.");
     } finally {
@@ -609,7 +609,7 @@ export default function App() {
 
   /* ── Session gate ──────────────────────────────────────────────────────
      While the session is being resolved, show a brief loader. When signed
-     out (or Supabase unconfigured → dev mode), show the LockScreen so the
+     out (or Supabase unconfigured → dev mode), show the AuthLandingView so the
      user can sign back in. The AuthModal mounts unconditionally so it can
      always be opened. */
   if (!sessionChecked) {
@@ -641,7 +641,7 @@ export default function App() {
           onClose={() => setIsAuthModalOpen(false)}
           onContinueAsGuest={handleContinueAsGuest}
         />
-        <LockScreen onSignIn={() => setIsAuthModalOpen(true)} />
+        <AuthLandingView onSignIn={() => setIsAuthModalOpen(true)} />
       </>
     );
   }
