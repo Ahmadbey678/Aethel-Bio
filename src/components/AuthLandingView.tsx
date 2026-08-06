@@ -1,24 +1,39 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Dna, Lock, Sparkles } from "lucide-react";
-import DnaHelixCanvas from "./DnaHelixCanvas";
+import { useEffect, useMemo, useState } from "react";
+import { Dna } from "lucide-react";
 
 interface AuthLandingViewProps {
   onSignIn: () => void;
   onContinueAsGuest?: () => void;
 }
 
+const FEATURES = [
+  {
+    icon: "📄",
+    title: "Auto-Parse →",
+    description: "Extracts EGFR, KRAS, TP53",
+  },
+  {
+    icon: "⚡",
+    title: "Live Sync →",
+    description: "Connected to ClinicalTrials.gov",
+  },
+  {
+    icon: "📊",
+    title: "Unmatched Registry →",
+    description: "Tracks unmet trial demand",
+  },
+] as const;
+
 /**
- * Split-hero landing for the signed-out state.
+ * Signed-out landing page.
  *
- * - Left 50%: badge, headline, sub-headline and the embedded glass access
- *   card (Sign In / Continue as Guest).
- * - Right 50%: high-density particle DNA helix (canvas) with a soft
- *   violet/magenta/cyan glow, on a dark slate canvas with a faint grid.
- * - Left-to-right staggered entrance (staggerChildren ~40ms) that respects
- *   prefers-reduced-motion.
+ * - Dark slate canvas with an ultra-subtle medical grid and soft glowing
+ *   violet radial gradients for depth.
+ * - 2-column SaaS layout (7/5): brand messaging + feature cards on the left,
+ *   glassmorphism access portal on the right.
+ * - Subtle staggered entrance that respects prefers-reduced-motion.
  */
 export default function AuthLandingView({ onSignIn, onContinueAsGuest }: AuthLandingViewProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const [phase, setPhase] = useState<"idle" | "enter">("idle");
 
   // Delay reduction under reduced motion: give content time to mount before
@@ -29,141 +44,116 @@ export default function AuthLandingView({ onSignIn, onContinueAsGuest }: AuthLan
   );
 
   useEffect(() => {
-    const t = window.setTimeout(() => setPhase("enter"), prefersReduced ? 40 : 220);
+    const t = window.setTimeout(() => setPhase("enter"), prefersReduced ? 40 : 180);
     return () => window.clearTimeout(t);
   }, [prefersReduced]);
 
   const ready = phase === "enter";
   const s = (ms: number) => (ready ? `${ms}ms` : "0ms");
+  const entrance = (ms: number) => ({
+    opacity: ready ? 1 : 0,
+    transform: ready ? "translateY(0)" : "translateY(14px)",
+    transition: `opacity 650ms cubic-bezier(0.16,1,0.3,1) ${s(ms)}, transform 650ms cubic-bezier(0.16,1,0.3,1) ${s(ms)}`,
+  });
 
   return (
-    <div
-      ref={containerRef}
-      className="bg-slate-950 text-white min-h-screen relative overflow-hidden"
-    >
-      {/* Atmosphere layers */}
+    <div className="bg-slate-950 text-white min-h-screen relative flex items-center justify-center p-8 lg:p-16 overflow-hidden">
+      {/* Ultra-subtle medical grid */}
       <div
         aria-hidden="true"
-        className="absolute inset-0 bg-grid [mask-image:radial-gradient(ellipse_75%_70%_at_35%_40%,black,transparent)]"
+        className="absolute inset-0 bg-grid [mask-image:radial-gradient(ellipse_80%_75%_at_50%_40%,black,transparent)]"
+      />
+
+      {/* Soft glowing violet radial gradients */}
+      <div
+        aria-hidden="true"
+        className="absolute -top-40 -left-32 w-[42rem] h-[42rem] bg-gradient-to-br from-violet-600/10 to-transparent blur-3xl rounded-full"
       />
       <div
         aria-hidden="true"
-        className="absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(ellipse 55% 45% at 22% 18%, rgba(139,92,246,0.10), transparent 60%)," +
-            "radial-gradient(ellipse 45% 40% at 85% 70%, rgba(6,182,212,0.06), transparent 60%)," +
-            "radial-gradient(ellipse 40% 35% at 70% 15%, rgba(217,70,239,0.05), transparent 60%)",
-        }}
+        className="absolute -bottom-48 -right-24 w-[40rem] h-[40rem] bg-gradient-to-tl from-violet-600/10 to-transparent blur-3xl rounded-full"
       />
-      {/* Subtle inset vignette to focus the centre */}
       <div
         aria-hidden="true"
-        className="absolute inset-0"
-        style={{ boxShadow: "inset 0 0 240px rgba(0,0,0,0.45)" }}
+        className="absolute top-1/3 right-1/4 w-96 h-96 bg-gradient-to-br from-fuchsia-600/5 to-transparent blur-3xl rounded-full"
       />
 
-      {/* Right-half helix layer */}
-      <div className="absolute right-0 top-0 w-1/2 h-full pointer-events-none">
-        <DnaHelixCanvas className="h-full w-full" />
-      </div>
+      <div className="relative z-10 w-full max-w-7xl grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-center">
+        {/* Left column — main messaging */}
+        <div className="lg:col-span-7" style={entrance(0)}>
+          <span className="inline-flex items-center gap-2 text-xs font-semibold tracking-widest text-violet-400 bg-violet-500/10 border border-violet-500/20 px-3.5 py-1.5 rounded-full w-fit mb-6">
+            <span aria-hidden="true">✨</span>
+            AETHEL BIO • PRECISION ONCOLOGY UNIT
+          </span>
 
-      {/* Foreground content */}
-      <div className="relative z-10 max-w-7xl mx-auto px-8 lg:px-12 min-h-screen flex flex-col justify-center">
-        <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-12">
-          {/* Left: typography + access card */}
-          <div
-            className="max-w-lg"
-            style={{
-              opacity: ready ? 1 : 0,
-              transform: ready ? "translateY(0)" : "translateY(16px)",
-              transition: `opacity 700ms cubic-bezier(0.16,1,0.3,1) ${s(0)}, transform 700ms cubic-bezier(0.16,1,0.3,1) ${s(0)}`,
-            }}
-          >
-            <span
-              className="text-xs font-semibold tracking-widest text-violet-400 uppercase mb-4 block"
-              style={{
-                opacity: ready ? 1 : 0,
-                transform: ready ? "translateY(0)" : "translateY(12px)",
-                transition: `opacity 600ms cubic-bezier(0.16,1,0.3,1) ${s(40)}, transform 600ms cubic-bezier(0.16,1,0.3,1) ${s(40)}`,
-              }}
-            >
-              <Sparkles className="inline-block w-3.5 h-3.5 -mt-0.5 mr-2 text-violet-400" />
-              Purpose of Aethel Bio
-            </span>
+          <h1 className="text-5xl lg:text-6xl font-extrabold text-white tracking-tight mb-2">
+            Aethel Bio
+          </h1>
+          <p className="text-2xl lg:text-3xl font-semibold text-slate-300 mb-6">
+            Precision Trial Matching Powered by Clinical Intelligence.
+          </p>
 
-            <h1
-              className="text-4xl lg:text-5xl font-extrabold text-white leading-tight mb-6"
-              style={{
-                opacity: ready ? 1 : 0,
-                transform: ready ? "translateY(0)" : "translateY(12px)",
-                transition: `opacity 600ms cubic-bezier(0.16,1,0.3,1) ${s(80)}, transform 600ms cubic-bezier(0.16,1,0.3,1) ${s(80)}`,
-              }}
-            >
-              Precision Trial Matching Powered by{" "}
-              <span className="bg-gradient-to-r from-violet-400 via-fuchsia-400 to-cyan-400 bg-clip-text text-transparent">
-                AI Genomics.
-              </span>
-            </h1>
+          <p className="text-slate-400 text-base leading-relaxed max-w-xl mb-10">
+            Instantly parse pathology and NGS reports, structure complex biomarker
+            profiles, and match oncology patients directly to active
+            ClinicalTrials.gov protocols.
+          </p>
 
-            <p
-              className="text-slate-400 text-base leading-relaxed mb-8 max-w-lg"
-              style={{
-                opacity: ready ? 1 : 0,
-                transform: ready ? "translateY(0)" : "translateY(12px)",
-                transition: `opacity 600ms cubic-bezier(0.16,1,0.3,1) ${s(120)}, transform 600ms cubic-bezier(0.16,1,0.3,1) ${s(120)}`,
-              }}
-            >
-              Instantly parse NGS pathology reports, structure biomarker profiles,
-              and match oncology patients with active ClinicalTrials.gov protocols.
-            </p>
-
-            {/* Embedded access card */}
-            <div
-              className="bg-slate-900/80 border border-slate-800 backdrop-blur-xl rounded-2xl p-6 max-w-md shadow-2xl shadow-violet-950/20"
-              style={{
-                opacity: ready ? 1 : 0,
-                transform: ready ? "translateY(0)" : "translateY(16px)",
-                transition: `opacity 700ms cubic-bezier(0.16,1,0.3,1) ${s(160)}, transform 700ms cubic-bezier(0.16,1,0.3,1) ${s(160)}`,
-              }}
-            >
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-xl bg-violet-600/15 border border-violet-500/20 flex items-center justify-center">
-                  <Dna className="w-5 h-5 text-violet-400" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-white">Aethel Bio Workspace</p>
-                  <p className="text-xs text-slate-500">Clinical trial intelligence</p>
-                </div>
+          {/* Feature cards row */}
+          <div className="grid gap-4 sm:grid-cols-3">
+            {FEATURES.map((feature, i) => (
+              <div
+                key={feature.title}
+                className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl"
+                style={entrance(80 + i * 60)}
+              >
+                <p className="text-sm font-semibold text-white mb-1">
+                  <span aria-hidden="true" className="mr-1.5">
+                    {feature.icon}
+                  </span>
+                  {feature.title}
+                </p>
+                <p className="text-xs text-slate-400 leading-relaxed">{feature.description}</p>
               </div>
-
-              <button
-                type="button"
-                onClick={onSignIn}
-                className="w-full bg-violet-600 hover:bg-violet-500 text-white py-3 font-semibold rounded-xl transition-all shadow-lg shadow-violet-600/30 flex items-center justify-center gap-2 active:scale-[0.97] cursor-pointer"
-              >
-                Sign In to Workspace
-                <ArrowRight className="w-4 h-4" />
-              </button>
-
-              <button
-                type="button"
-                onClick={onContinueAsGuest}
-                className="w-full mt-3 text-center text-slate-400 hover:text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 py-2 cursor-pointer active:scale-[0.97]"
-              >
-                Continue as Guest (Demo)
-                <ArrowRight className="w-4 h-4" />
-              </button>
-
-              <p className="text-slate-500 text-xs mt-4 block text-center flex items-center justify-center gap-1.5">
-                <Lock className="w-3 h-3 text-slate-500" />
-                Encrypted Clinical Environment &bull; US East Node
-              </p>
-            </div>
+            ))}
           </div>
+        </div>
 
-          {/* Right: reserved for the particle graphics */}
-          <div className="hidden lg:block" aria-hidden="true" />
+        {/* Right column — access portal card */}
+        <div className="lg:col-span-5" style={entrance(160)}>
+          <div className="bg-slate-900/90 border border-slate-800 backdrop-blur-2xl rounded-2xl p-8 shadow-2xl shadow-violet-950/30 max-w-md w-full ml-auto">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-11 h-11 rounded-xl bg-violet-600/15 border border-violet-500/20 flex items-center justify-center shrink-0">
+                <Dna className="w-5.5 h-5.5 text-violet-400" />
+              </div>
+              <div>
+                <p className="text-lg font-bold text-white">Aethel Bio Workspace</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Sign in or explore as guest to launch trial matching.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={onSignIn}
+              className="w-full bg-violet-600 hover:bg-violet-500 text-white py-3.5 font-semibold rounded-xl transition-all shadow-lg shadow-violet-600/30 mt-6 cursor-pointer active:scale-[0.97]"
+            >
+              Sign In to Account →
+            </button>
+
+            <button
+              type="button"
+              onClick={onContinueAsGuest}
+              className="w-full mt-3 bg-slate-800/80 hover:bg-slate-800 text-slate-300 py-3 font-medium rounded-xl border border-slate-700/60 transition-all text-sm text-center block cursor-pointer active:scale-[0.97]"
+            >
+              Continue as Guest (Demo)
+            </button>
+
+            <p className="text-slate-500 text-xs text-center mt-6 block">
+              🔒 Encrypted Clinical Environment • US East Node
+            </p>
+          </div>
         </div>
       </div>
     </div>
