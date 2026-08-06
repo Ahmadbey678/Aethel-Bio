@@ -253,6 +253,20 @@ export default function App() {
     [fetchTrials, stage],
   );
 
+  /* One-click preset case loaders — fill Disease, Biomarker, and Stage, then search. */
+  const handlePresetSelect = useCallback(
+    (bio: string, cond: string, presetStage: string) => {
+      setBiomarker(bio);
+      setCondition(cond);
+      setStage(presetStage);
+      setPatientProfile(null);
+      setUploadedFileName(null);
+      setIsValidMedicalDoc(null);
+      setTimeout(() => fetchTrials(bio, cond, presetStage), 0);
+    },
+    [fetchTrials],
+  );
+
   const handleSearch = useCallback(() => {
     fetchTrials(biomarker, condition, stage);
   }, [biomarker, condition, stage, fetchTrials]);
@@ -545,6 +559,7 @@ export default function App() {
               extracting={extracting}
               isValidMedicalDoc={isValidMedicalDoc}
               onSampleClick={handleSampleClick}
+              onPresetSelect={handlePresetSelect}
               onFileSelected={handleFileSelected}
               onSearch={handleSearch}
               onReset={handleReset}
