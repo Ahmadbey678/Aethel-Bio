@@ -1,33 +1,30 @@
 import { useEffect, useRef } from "react";
 
 /* ============================================================
-   ParticleBackground — "Precision Oncology" data-processing
-   backdrop for the Auth Landing (LockScreen).
+   ParticleBackground — minimal "data network" backdrop for the
+   Auth Landing (LockScreen).
 
-   A canvas-driven animation:
-   • Nucleotide glyphs (A / C / T / G) and small molecular shapes
-     drift inward from the edges of the screen.
-   • A rotating double-helix sits at the centre and acts as a
-     visual "filter".
-   • Particles that pass through the helix emerge on the right as
-     aligned trial badges (protocol IDs + phase tags).
+   A canvas-driven generative visualization:
+   • A cloud of very tiny monochrome (cool cyan) points of light
+     distributed through a soft 3D volume.
+   • Nearby points are joined by a web of nearly invisible,
+     ultra-thin, faintly glowing lines — a neural-matrix /
+     synaptic-map topology.
+   • The whole network rotates very slowly about the vertical
+     axis, tilts gently, and breathes with a slow global pulse.
+     Abstract, non-distracting, unhurried.
+   • Trial badges (protocol IDs + phase tags) surface from the
+     network and settle into a monochrome column on the right,
+     matching the minimal aesthetic.
 
-   Performance is deliberately conservative: pre-rendered glow
-   sprites, additive blending, DPR capping, batched strokes, and a
-   full pause when the tab is hidden. Under `prefers-reduced-motion`
-   a single static frame is drawn instead of an animation loop.
+   Performance: precomputed topology, batched strokes / sprites,
+   additive blending, DPR capping, and a full pause when the tab
+   is hidden. Under `prefers-reduced-motion` a single static
+   frame is drawn instead of an animation loop.
    ============================================================ */
 
-const NUCLEOTIDES = ["A", "C", "T", "G"] as const;
-
-const PALETTE = {
-  blue: { r: 82, g: 133, b: 247 },
-  cyan: { r: 84, g: 220, b: 199 },
-  white: { r: 224, g: 238, b: 255 },
-  gold: { r: 228, g: 194, b: 124 },
-} as const;
-
-type ColorKey = keyof typeof PALETTE;
+const CYAN = { r: 130, g: 216, b: 250 }; // monochrome cool cyan
+const INK = { r: 218, g: 235, b: 252 };  // pale ice for badge text
 
 const PROTOCOLS: ReadonlyArray<{ id: string; tag: string }> = [
   { id: "NCT04267848", tag: "PHASE 2" },
@@ -39,95 +36,75 @@ const PROTOCOLS: ReadonlyArray<{ id: string; tag: string }> = [
   { id: "NCT04191135", tag: "PHASE 1" },
 ];
 
-const MAX_SLOTS = 5;
-const BADGE_LIFE = 4.5;
-const HELIX_TURNS = 2.3;
-const HELIX_SPEED = 0.55;
-const SLOT_GAP = 44;
-const SLOT_TOP_OFFSET = 92;
-const BADGE_HEIGHT = 36;
+const ROT_SPEED = 0.055; // rad/s → one full turn ≈ 114 s
+const TILT_BASE = 0.16;
+const TILT_SWAY = 0.05;
+const TILT_RATE = 0.09;
+const GLOBAL_PULSE_RATE = 0.5;
+const LINK_FRAC = 0.17; // link distance as a fraction of cloud radius
+const LINK_MAX_PER_NODE = 3;
+const NODE_ALPHA_BUCKETS = 8;
 
-interface BadgeInfo {
-  id: string;
-  tag: string;
-}
+const MAX_SLOTS = 4;
+const BADGE_HEIGHT = 34;
+const SLOT_GAP = 46;
+const SLOT_TOP_OFFSET = 70;
 
-interface Particle {
-  kind: "nucleotide" | "molecule";
-  letter: string;
-  color: ColorKey;
+interface NetworkNode {
   x: number;
   y: number;
-  vx: number;
-  vy: number;
-  px: number;
-  py: number;
-  size: number;
+  z: number;
+  phase: number;
+  rate: number;
+  amp: number;
+  r: number;
+}
+
+interface NetworkLink {
+  a: number;
+  b: number;
+  d: number;
+}
+
+interface Badge {
+  id: string;
+  tag: string;
+  x: number;
+  y: number;
   alpha: number;
-  wobblePhase: number;
-  wobbleAmp: number;
-  state: "travel" | "through" | "badge";
-  s: number;
-  theta: number;
-  spinDir: number;
-  badge: BadgeInfo | null;
-  slot: number;
-  tx: number;
-  ty: number;
+  state: "in" | "hold" | "out";
   age: number;
-  settled: boolean;
-  fading: boolean;
-  dead: boolean;
-  badgeW: number;
-}
-
-interface Layout {
+  hold: number;
   w: number;
-  h: number;
-  cx: number;
-  cy: number;
-  R: number;
-  H: number;
-  badgeW: number;
-  columnX: number;
-  target: number;
 }
 
-type GlowSprites = Record<ColorKey, HTMLCanvasElement>;
+interface Slot {
+  delay: number;
+  badge: Badge | null;
+  y: number;
+}
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-function rgba(c: { r: number; g: number; b: number }, a: number) {
-  return `rgba(${c.r},${c.g},${c.b},${a})`;
-}
+const rgba = (c: { r: number; g: number; b: number }, a: number) =>
+  `rgba(${c.r},${c.g},${c.b},${a})`;
 
-/* Pre-render a soft radial glow once; the animation loop only ever
-   blits it with drawImage (much cheaper than per-frame gradients). */
-function makeGlowSprite(color: ColorKey): HTMLCanvasElement {
-  const size = 64;
+/* Pre-render one soft radial "light" sprite (monochrome, cyan-tinted)
+   once; the loop only ever blits it with drawImage. */
+function makeDotSprite(): HTMLCanvasElement | null {
+  const size = 24;
   const c = document.createElement("canvas");
   c.width = size;
   c.height = size;
   const g = c.getContext("2d");
-  if (g) {
-    const { r, g: gr, b } = PALETTE[color];
-    const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-    grad.addColorStop(0, `rgba(${r},${gr},${b},0.9)`);
-    grad.addColorStop(0.32, `rgba(${r},${gr},${b},0.3)`);
-    grad.addColorStop(1, `rgba(${r},${gr},${b},0)`);
-    g.fillStyle = grad;
-    g.fillRect(0, 0, size, size);
-  }
+  if (!g) return null;
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, rgba(CYAN, 1));
+  grad.addColorStop(0.35, rgba(CYAN, 0.5));
+  grad.addColorStop(1, rgba(CYAN, 0));
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
   return c;
-}
-
-function computeLayout(w: number, h: number): Layout {
-  const H = Math.min(h * 0.54, 400);
-  const R = clamp(Math.min(w, h) * 0.075, 34, 88);
-  const badgeW = w < 640 ? 120 : 168;
-  const columnX = w - badgeW / 2 - (w < 640 ? 10 : 22);
-  const target = clamp(Math.round((w * h) / 26000), 30, 85);
-  return { w, h, cx: w / 2, cy: h * 0.5, R, H, badgeW, columnX, target };
 }
 
 function pathRoundRect(
@@ -148,325 +125,136 @@ function pathRoundRect(
   ctx.closePath();
 }
 
-/* ── Rotating double helix ─────────────────────────────────────
-   Both strands are swept top-to-bottom; at each point the strand
-   on the right-hand side of the axis counts as "front" (closer to
-   the viewer). Segments are collected by depth and drawn in
-   back → back-rung → front-rung → front order, which gives the
-   classic DNA occlusion without any per-frame sorting. */
-function drawHelix(
-  ctx: CanvasRenderingContext2D,
-  t: number,
-  layout: Layout,
-  sprites: GlowSprites,
-) {
-  const { cx, cy, R, H } = layout;
-  const phi = t * HELIX_SPEED;
-  const steps = 96;
-  const rungEvery = 4;
-  const backStrand: Array<readonly [number, number, number, number]> = [];
-  const frontStrand: Array<readonly [number, number, number, number]> = [];
-  const backRungs: Array<readonly [number, number, number, number]> = [];
-  const frontRungs: Array<readonly [number, number, number, number]> = [];
+/* ── Generative network ──────────────────────────────────────
+   Nodes are scattered through a soft 3D volume (slightly
+   center-weighted, flattened vertically). Links connect nearby
+   nodes, capped per node, so the topology reads as a sparse
+   neural web rather than a solid mesh. */
+function buildNetwork(w: number, h: number) {
+  const cloudR = Math.hypot(w, h) * 0.42;
+  const count = clamp(Math.round((w * h) / 720), 900, 2600);
+  const linkDist = cloudR * LINK_FRAC;
 
-  let prevA: readonly [number, number] | null = null;
-  let prevB: readonly [number, number] | null = null;
+  const nodes: NetworkNode[] = [];
+  for (let i = 0; i < count; i++) {
+    const r = cloudR * Math.pow(Math.random(), 0.66);
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    nodes.push({
+      x: r * Math.sin(phi) * Math.cos(theta),
+      y: r * Math.cos(phi) * 0.86,
+      z: r * Math.sin(phi) * Math.sin(theta),
+      phase: Math.random() * Math.PI * 2,
+      rate: 0.35 + Math.random() * 0.65,
+      amp: 0.16 + Math.random() * 0.4,
+      r: 0.55 + Math.random() * 0.75,
+    });
+  }
 
-  for (let i = 0; i <= steps; i++) {
-    const s = -H / 2 + (H * i) / steps;
-    const ang = (s / H) * Math.PI * 2 * HELIX_TURNS + phi;
-    const cosA = Math.cos(ang);
-    const front = cosA >= 0;
-    const xA = cx + R * cosA;
-    const xB = cx - R * cosA;
-    const y = cy + s;
+  /* Spatial hash keeps the neighbour search roughly linear */
+  const half = cloudR + linkDist;
+  const cell = linkDist;
+  const cols = Math.ceil((half * 2) / cell) + 1;
+  const key = (x: number, y: number, z: number) =>
+    (Math.floor((x + half) / cell) * cols + Math.floor((y + half) / cell)) * cols +
+    Math.floor((z + half) / cell);
 
-    if (prevA) {
-      const seg: readonly [number, number, number, number] = [prevA[0], prevA[1], xA, y];
-      (front ? frontStrand : backStrand).push(seg);
+  const cells = new Map<number, number[]>();
+  nodes.forEach((nd, i) => {
+    const k = key(nd.x, nd.y, nd.z);
+    const bucket = cells.get(k);
+    if (bucket) bucket.push(i);
+    else cells.set(k, [i]);
+  });
+
+  const links: NetworkLink[] = [];
+  const perNode = new Uint8Array(count);
+  for (let i = 0; i < count; i++) {
+    if (perNode[i] >= LINK_MAX_PER_NODE) continue;
+    const nd = nodes[i];
+    const gx = Math.floor((nd.x + half) / cell);
+    const gy = Math.floor((nd.y + half) / cell);
+    const gz = Math.floor((nd.z + half) / cell);
+    const cands: Array<[number, number]> = [];
+
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oy = -1; oy <= 1; oy++) {
+        for (let oz = -1; oz <= 1; oz++) {
+          const k = ((gx + ox) * cols + (gy + oy)) * cols + (gz + oz);
+          const bucket = cells.get(k);
+          if (!bucket) continue;
+          for (const j of bucket) {
+            if (j <= i || perNode[j] >= LINK_MAX_PER_NODE) continue;
+            const m = nodes[j];
+            const d = Math.hypot(m.x - nd.x, m.y - nd.y, m.z - nd.z);
+            if (d <= linkDist) cands.push([j, d]);
+          }
+        }
+      }
     }
-    if (prevB) {
-      const seg: readonly [number, number, number, number] = [prevB[0], prevB[1], xB, y];
-      (!front ? frontStrand : backStrand).push(seg);
-    }
-    prevA = [xA, y];
-    prevB = [xB, y];
 
-    if (i % rungEvery === 0) {
-      const backX = front ? xB : xA;
-      const frontX = front ? xA : xB;
-      backRungs.push([backX, y, cx, y]);
-      frontRungs.push([cx, y, frontX, y]);
+    cands.sort((a, b) => a[1] - b[1]);
+    const room = LINK_MAX_PER_NODE - perNode[i];
+    for (let c = 0; c < Math.min(room, cands.length); c++) {
+      const j = cands[c][0];
+      if (perNode[j] >= LINK_MAX_PER_NODE) continue;
+      links.push({ a: i, b: j, d: cands[c][1] });
+      perNode[i]++;
+      perNode[j]++;
+      if (perNode[i] >= LINK_MAX_PER_NODE) break;
     }
   }
 
-  const strokeSegments = (
-    segs: Array<readonly [number, number, number, number]>,
-    color: string,
-    width: number,
-  ) => {
-    if (segs.length === 0) return;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    for (const [x1, y1, x2, y2] of segs) {
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-    }
-    ctx.stroke();
-  };
-
-  /* Faint axis */
-  ctx.strokeStyle = rgba(PALETTE.white, 0.05);
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(cx, cy - H / 2);
-  ctx.lineTo(cx, cy + H / 2);
-  ctx.stroke();
-
-  /* Back layers → front layers (painter's order for occlusion) */
-  strokeSegments(backStrand, rgba(PALETTE.blue, 0.16), 1.2);
-  strokeSegments(backRungs, rgba(PALETTE.blue, 0.12), 1);
-  strokeSegments(frontRungs, rgba(PALETTE.white, 0.3), 1);
-
-  ctx.globalCompositeOperation = "lighter";
-  strokeSegments(frontStrand, rgba(PALETTE.white, 0.1), 5.5);
-  ctx.globalCompositeOperation = "source-over";
-  strokeSegments(frontStrand, rgba(PALETTE.white, 0.78), 1.5);
-
-  /* Connector nodes at the top / bottom of the axis */
-  for (const yy of [cy - H / 2, cy + H / 2]) {
-    ctx.globalCompositeOperation = "lighter";
-    ctx.globalAlpha = 0.45;
-    ctx.drawImage(sprites.white, cx - 14, yy - 14, 28, 28);
-    ctx.globalCompositeOperation = "source-over";
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = rgba(PALETTE.white, 0.8);
-    ctx.beginPath();
-    ctx.arc(cx, yy, 1.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  return { nodes, links, cloudR, linkDist };
 }
 
-function pickProtocol(): BadgeInfo {
+function pickProtocol() {
   return PROTOCOLS[Math.floor(Math.random() * PROTOCOLS.length)];
 }
 
-function spawnParticle(layout: Layout): Particle {
-  const roll = Math.random();
-  const fromLeft = roll < 0.5;
-  const fromTop = roll >= 0.5 && roll < 0.62;
-  const x = fromLeft ? -12 : fromTop ? Math.random() * layout.w : layout.w + 12;
-  const y = fromLeft ? Math.random() * layout.h : fromTop ? -12 : Math.random() * layout.h;
-
-  const dir = Math.atan2(layout.cy - y, layout.cx - x) + (Math.random() - 0.5) * 0.8;
-  const speed = 24 + Math.random() * 30;
-  const vx = Math.cos(dir) * speed;
-  const vy = Math.sin(dir) * speed;
-  const len = Math.hypot(vx, vy) || 1;
-
-  const colorRoll = Math.random();
-  const color: ColorKey =
-    colorRoll < 0.45 ? "blue" : colorRoll < 0.68 ? "white" : colorRoll < 0.88 ? "cyan" : "gold";
-
-  const kind: Particle["kind"] = Math.random() < 0.68 ? "nucleotide" : "molecule";
-  const letter = NUCLEOTIDES[Math.floor(Math.random() * NUCLEOTIDES.length)];
-  const size = kind === "nucleotide" ? 9 + Math.random() * 5 : 4 + Math.random() * 3;
-
-  return {
-    kind,
-    letter,
-    color,
-    x,
-    y,
-    vx,
-    vy,
-    px: -vy / len,
-    py: vx / len,
-    size,
-    alpha: 0.3 + Math.random() * 0.45,
-    wobblePhase: Math.random() * Math.PI * 2,
-    wobbleAmp: 14 + Math.random() * 26,
-    state: "travel",
-    s: 0,
-    theta: 0,
-    spinDir: 1,
-    badge: null,
-    slot: 0,
-    tx: 0,
-    ty: 0,
-    age: 0,
-    settled: false,
-    fading: false,
-    dead: false,
-    badgeW: layout.badgeW,
-  };
-}
-
-function seedParticles(layout: Layout, count: number): Particle[] {
-  const out: Particle[] = [];
-  for (let i = 0; i < count; i++) {
-    const p = spawnParticle(layout);
-    p.x = Math.random() * layout.w;
-    p.y = Math.random() * layout.h;
-    out.push(p);
-  }
-  return out;
-}
-
-function slotY(layout: Layout, slot: number) {
-  return layout.cy - SLOT_TOP_OFFSET + slot * SLOT_GAP;
-}
-
-/* Advance one particle. When a particle exits the helix (through →
-   badge), `claimSlot` is invoked so the caller can assign a column
-   slot using its shared counter. */
-function updateParticle(
-  p: Particle,
-  dt: number,
-  layout: Layout,
-  claimSlot: (p: Particle) => void,
-) {
-  switch (p.state) {
-    case "travel": {
-      p.wobblePhase += dt * 2.2;
-      const wob = Math.sin(p.wobblePhase) * p.wobbleAmp;
-      p.x += (p.vx + p.px * wob) * dt;
-      p.y += (p.vy + p.py * wob) * dt;
-
-      const dx = p.x - layout.cx;
-      const dy = p.y - layout.cy;
-      if (Math.abs(dy) < layout.H / 2 + 34 && Math.abs(dx) < layout.R + 30) {
-        /* Enter the filter: orbit the helix axis while travelling along it. */
-        p.state = "through";
-        p.s = clamp(p.y - layout.cy, -layout.H / 2 + 14, layout.H / 2 - 14);
-        p.theta = Math.random() * Math.PI * 2;
-        p.spinDir = Math.random() < 0.5 ? 1 : -1;
-      } else if (p.x < -40 || p.x > layout.w + 40 || p.y < -40 || p.y > layout.h + 40) {
-        p.dead = true;
-      }
-      break;
-    }
-    case "through": {
-      p.s += p.spinDir * 16 * dt;
-      p.theta += p.spinDir * 2.6 * dt;
-      p.x = layout.cx + layout.R * 0.92 * Math.cos(p.theta);
-      p.y = layout.cy + p.s;
-
-      if (Math.abs(p.s) > layout.H / 2 + 6) {
-        /* Emerge from the filter → slide out as an aligned trial badge. */
-        p.state = "badge";
-        claimSlot(p);
-      }
-      break;
-    }
-    case "badge": {
-      p.age += dt;
-      p.x += (p.tx - p.x) * Math.min(1, 3.2 * dt);
-      p.y += (p.ty - p.y) * Math.min(1, 3.2 * dt);
-      if (!p.settled && Math.hypot(p.tx - p.x, p.ty - p.y) < 1.5) p.settled = true;
-      if (p.settled && p.age > BADGE_LIFE) p.fading = true;
-      if (p.fading) {
-        p.alpha -= dt * 1.4;
-        if (p.alpha <= 0) p.dead = true;
-      } else {
-        p.alpha = Math.min(1, p.alpha + dt * 3);
-      }
-      break;
-    }
-  }
-}
-
-function drawParticle(ctx: CanvasRenderingContext2D, p: Particle, sprites: GlowSprites) {
-  const boost = p.state === "through" ? 1.3 : 1;
-  const alpha = clamp(p.alpha * boost, 0, 1);
-
-  /* Glow */
-  ctx.globalCompositeOperation = "lighter";
-  ctx.globalAlpha = alpha * 0.7;
-  const sz = p.size * 3.2;
-  ctx.drawImage(sprites[p.color], p.x - sz, p.y - sz, sz * 2, sz * 2);
-  ctx.globalCompositeOperation = "source-over";
-  ctx.globalAlpha = 1;
-
-  if (p.kind === "nucleotide") {
-    ctx.font = `600 ${p.size}px ui-monospace, "SF Mono", Menlo, Consolas, monospace`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = rgba(PALETTE.white, alpha);
-    ctx.fillText(p.letter, p.x, p.y + 0.5);
-  } else {
-    /* Minimal molecular motif: a ring with a bonded satellite dot. */
-    ctx.strokeStyle = rgba(PALETTE.cyan, alpha * 0.85);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.size * 0.9, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.strokeStyle = rgba(PALETTE.cyan, alpha * 0.4);
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(p.x + p.size * 1.6, p.y - p.size * 0.8);
-    ctx.stroke();
-    ctx.fillStyle = rgba(PALETTE.white, alpha * 0.9);
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 1.2, 0, Math.PI * 2);
-    ctx.arc(p.x + p.size * 1.6, p.y - p.size * 0.8, 1.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-
-function drawBadge(ctx: CanvasRenderingContext2D, p: Particle, sprites: GlowSprites) {
-  if (!p.badge) return;
-  const bw = p.badgeW;
+/* Monochrome trial badge: thin cyan outline, a medical crosshair
+   glyph, the protocol ID and a muted phase tag. No gold, no LEDs. */
+function drawBadge(ctx: CanvasRenderingContext2D, badge: Badge) {
+  const bw = badge.w;
   const bh = BADGE_HEIGHT;
-  const alpha = clamp(p.alpha, 0, 1);
-  const pop = Math.min(1, p.age * 4);
-  const scale = 0.9 + 0.1 * pop;
-
   ctx.save();
-  ctx.globalAlpha = alpha;
-
-  /* Soft entry glow while the badge pops in */
-  if (pop < 1) {
-    ctx.globalCompositeOperation = "lighter";
-    ctx.globalAlpha = (1 - pop) * 0.25;
-    ctx.drawImage(sprites.white, p.x - bw * 0.7, p.y - bh * 0.7, bw * 1.4, bh * 1.4);
-    ctx.globalCompositeOperation = "source-over";
-    ctx.globalAlpha = alpha;
-  }
-
-  ctx.translate(p.x, p.y);
-  ctx.scale(scale, scale);
+  ctx.globalAlpha = clamp(badge.alpha, 0, 1);
 
   pathRoundRect(ctx, -bw / 2, -bh / 2, bw, bh, 6);
-  ctx.fillStyle = "rgba(8,13,28,0.66)";
+  ctx.fillStyle = "rgba(6,11,24,0.62)";
   ctx.fill();
-  ctx.strokeStyle = rgba(PALETTE.white, 0.3);
+  ctx.strokeStyle = rgba(CYAN, 0.26);
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  /* Gold accent rail */
-  ctx.fillStyle = rgba(PALETTE.gold, 0.9);
-  ctx.fillRect(-bw / 2 + 1, -bh / 2 + 8, 2, bh - 16);
+  /* Crosshair glyph */
+  const gx = -bw / 2 + 15;
+  ctx.strokeStyle = rgba(CYAN, 0.8);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(gx - 4.5, 0);
+  ctx.lineTo(gx + 4.5, 0);
+  ctx.moveTo(gx, -4.5);
+  ctx.lineTo(gx, 4.5);
+  ctx.stroke();
+  ctx.fillStyle = rgba(CYAN, 0.9);
+  ctx.beginPath();
+  ctx.arc(gx, 0, 1.2, 0, Math.PI * 2);
+  ctx.fill();
 
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
+  ctx.fillStyle = rgba(INK, 0.92);
+  ctx.font = "600 10px ui-monospace, \"SF Mono\", Menlo, Consolas, monospace";
+  ctx.fillText(badge.id, -bw / 2 + 26, -6);
+  ctx.fillStyle = rgba(CYAN, 0.6);
+  ctx.font = "600 7px ui-monospace, \"SF Mono\", Menlo, Consolas, monospace";
+  ctx.fillText(badge.tag, -bw / 2 + 26, 9);
 
-  /* Phase tag (gold, equipment-style) */
-  ctx.font = "600 8px ui-monospace, \"SF Mono\", Menlo, Consolas, monospace";
-  ctx.fillStyle = rgba(PALETTE.gold, 0.95);
-  ctx.fillText(p.badge.tag, -bw / 2 + 10, -bh / 2 + 9);
-
-  /* Protocol ID (electric white, mono) */
-  ctx.font = "600 11px ui-monospace, \"SF Mono\", Menlo, Consolas, monospace";
-  ctx.fillStyle = rgba(PALETTE.white, 1);
-  ctx.fillText(p.badge.id, -bw / 2 + 10, bh / 2 - 10);
-
-  /* Teal status LED */
-  ctx.fillStyle = rgba(PALETTE.cyan, 1);
+  /* Trailing data dot */
+  ctx.fillStyle = rgba(CYAN, 0.7);
   ctx.beginPath();
-  ctx.arc(bw / 2 - 9, -bh / 2 + 9, 1.8, 0, Math.PI * 2);
+  ctx.arc(bw / 2 - 9, 0, 1.4, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.restore();
@@ -481,56 +269,138 @@ export default function ParticleBackground() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const sprites: GlowSprites = {
-      blue: makeGlowSprite("blue"),
-      cyan: makeGlowSprite("cyan"),
-      white: makeGlowSprite("white"),
-      gold: makeGlowSprite("gold"),
-    };
-
-    let layout = computeLayout(window.innerWidth, window.innerHeight);
-    let dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = Math.round(layout.w * dpr);
-    canvas.height = Math.round(layout.h * dpr);
-
+    const sprite = makeDotSprite();
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    let particles: Particle[] = [];
-    let nextSlot = 0;
+    let w = window.innerWidth;
+    let h = window.innerHeight;
+    let dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+
+    let net = buildNetwork(w, h);
+    let { cloudR, linkDist } = net;
+    let fov = cloudR * 2.6;
+    let badgeW = w < 640 ? 124 : 168;
+    let columnX = w - badgeW / 2 - (w < 640 ? 10 : 22);
+
+    let pxs = new Float64Array(net.nodes.length);
+    let pys = new Float64Array(net.nodes.length);
+    let pers = new Float64Array(net.nodes.length);
+
+    let slots: Slot[] = [];
+    const initSlots = () => {
+      slots = Array.from({ length: MAX_SLOTS }, (_, i) => ({
+        delay: 1.2 + Math.random() * 3.2,
+        badge: null,
+        y: h * 0.5 - SLOT_TOP_OFFSET + i * SLOT_GAP,
+      }));
+    };
+    initSlots();
+
+    const lineBuckets: number[][] = Array.from({ length: 5 }, () => []);
+    const dotBuckets: number[][] = Array.from({ length: NODE_ALPHA_BUCKETS }, () => []);
+
     let raf = 0;
     let last = performance.now();
     let time = 0;
-
-    /* Assign a rotating column slot; retire whatever badge is parked
-       there so the column keeps cycling. */
-    const claimSlot = (p: Particle) => {
-      p.badge = pickProtocol();
-      p.slot = nextSlot;
-      nextSlot = (nextSlot + 1) % MAX_SLOTS;
-      const occupant = particles.find(
-        (q) => q !== p && q.state === "badge" && q.slot === p.slot && !q.fading,
-      );
-      if (occupant) occupant.fading = true;
-      p.badgeW = layout.badgeW;
-      p.tx = layout.columnX;
-      p.ty = slotY(layout, p.slot);
-      p.age = 0;
-      p.settled = false;
-      p.alpha = 0;
-      p.fading = false;
-    };
+    let rotY = 0.35;
 
     const onResize = () => {
-      layout = computeLayout(window.innerWidth, window.innerHeight);
+      w = window.innerWidth;
+      h = window.innerHeight;
       dpr = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = Math.round(layout.w * dpr);
-      canvas.height = Math.round(layout.h * dpr);
-      for (const p of particles) {
-        if (p.state === "badge") {
-          p.badgeW = layout.badgeW;
-          p.tx = layout.columnX;
-          p.ty = slotY(layout, p.slot);
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      net = buildNetwork(w, h);
+      cloudR = net.cloudR;
+      linkDist = net.linkDist;
+      fov = cloudR * 2.6;
+      badgeW = w < 640 ? 124 : 168;
+      columnX = w - badgeW / 2 - (w < 640 ? 10 : 22);
+      pxs = new Float64Array(net.nodes.length);
+      pys = new Float64Array(net.nodes.length);
+      pers = new Float64Array(net.nodes.length);
+      initSlots();
+    };
+
+    const render = (t: number, rot: number, drawBadges: boolean) => {
+      const tilt = TILT_BASE + Math.sin(t * TILT_RATE) * TILT_SWAY;
+      const cosY = Math.cos(rot);
+      const sinY = Math.sin(rot);
+      const cosT = Math.cos(tilt);
+      const sinT = Math.sin(tilt);
+      const fade = Math.min(1, t / 1.6);
+      const globalPulse = 0.72 + 0.28 * Math.sin(t * GLOBAL_PULSE_RATE);
+      const cx = w / 2;
+      const cy = h / 2;
+      const nodes = net.nodes;
+      const n = nodes.length;
+
+      /* Project every node once per frame */
+      for (let i = 0; i < n; i++) {
+        const nd = nodes[i];
+        const x1 = nd.x * cosY + nd.z * sinY;
+        const z1 = -nd.x * sinY + nd.z * cosY;
+        const y1 = nd.y * cosT - z1 * sinT;
+        const z2 = nd.y * sinT + z1 * cosT;
+        const p = fov / (fov + z2);
+        pxs[i] = cx + x1 * p;
+        pys[i] = cy + y1 * p;
+        pers[i] = p;
+      }
+
+      /* Nearly-invisible web of lines, batched by faintness */
+      const links = net.links;
+      for (const b of lineBuckets) b.length = 0;
+      for (let li = 0; li < links.length; li++) {
+        const L = links[li];
+        const depth = 0.55 + 0.45 * ((pers[L.a] + pers[L.b]) / 2 - 0.72) / 0.91;
+        const alpha = 0.055 * (1 - 0.5 * (L.d / linkDist)) * depth * globalPulse * fade;
+        if (alpha <= 0.005) continue;
+        lineBuckets[Math.min(4, Math.floor(alpha / 0.024))].push(li);
+      }
+      ctx.globalCompositeOperation = "lighter";
+      ctx.lineWidth = 0.6;
+      ctx.lineCap = "round";
+      for (let b = 0; b < 5; b++) {
+        const segs = lineBuckets[b];
+        if (segs.length === 0) continue;
+        ctx.strokeStyle = rgba(CYAN, 0.012 + b * 0.024);
+        ctx.beginPath();
+        for (const li of segs) {
+          const L = links[li];
+          ctx.moveTo(pxs[L.a], pys[L.a]);
+          ctx.lineTo(pxs[L.b], pys[L.b]);
         }
+        ctx.stroke();
+      }
+
+      /* Very tiny points of light, bucketed by brightness */
+      for (const b of dotBuckets) b.length = 0;
+      for (let i = 0; i < n; i++) {
+        const a = clamp(0.16 + 0.5 * ((pers[i] - 0.72) / 0.91), 0.05, 0.85) * globalPulse * fade;
+        dotBuckets[Math.min(NODE_ALPHA_BUCKETS - 1, Math.floor(a / 0.11))].push(i);
+      }
+      if (sprite) {
+        for (let b = 0; b < NODE_ALPHA_BUCKETS; b++) {
+          const ids = dotBuckets[b];
+          if (ids.length === 0) continue;
+          ctx.globalAlpha = 0.04 + b * 0.105;
+          for (const i of ids) {
+            const nd = nodes[i];
+            const pulse = 1 + nd.amp * Math.sin(t * nd.rate + nd.phase);
+            const s = Math.max(0.7, nd.r * 2.4 * pers[i] * pulse);
+            ctx.drawImage(sprite, pxs[i] - s / 2, pys[i] - s / 2, s, s);
+          }
+        }
+      }
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
+
+      /* Monochrome trial badges */
+      if (drawBadges) {
+        for (const s of slots) if (s.badge) drawBadge(ctx, s.badge);
       }
     };
 
@@ -539,33 +409,55 @@ export default function ParticleBackground() {
       const dt = clamp((now - last) / 1000, 0, 0.05);
       last = now;
       time += dt;
+      rotY += dt * ROT_SPEED;
+
+      /* Badge lifecycle: surface from the network, hold, retire */
+      for (let i = 0; i < MAX_SLOTS; i++) {
+        const s = slots[i];
+        if (!s.badge) {
+          s.delay -= dt;
+          if (s.delay <= 0) {
+            const p = pickProtocol();
+            s.badge = {
+              id: p.id,
+              tag: p.tag,
+              x: columnX + 26,
+              y: s.y,
+              alpha: 0,
+              state: "in",
+              age: 0,
+              hold: 4.5 + Math.random() * 2.5,
+              w: badgeW,
+            };
+          }
+          continue;
+        }
+        const b = s.badge;
+        if (b.state === "in") {
+          b.age += dt;
+          b.alpha = Math.min(1, b.age / 0.7);
+          b.x = columnX + 26 * (1 - b.alpha);
+          if (b.alpha >= 1) {
+            b.state = "hold";
+            b.age = 0;
+          }
+        } else if (b.state === "hold") {
+          b.age += dt;
+          if (b.age >= b.hold) b.state = "out";
+        } else {
+          b.alpha -= dt / 0.7;
+          if (b.alpha <= 0) {
+            s.badge = null;
+            s.delay = 2.4 + Math.random() * 4;
+          }
+        }
+      }
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, layout.w, layout.h);
+      ctx.clearRect(0, 0, w, h);
       ctx.globalCompositeOperation = "source-over";
       ctx.globalAlpha = 1;
-
-      drawHelix(ctx, time, layout, sprites);
-
-      let travelCount = 0;
-      for (const p of particles) {
-        updateParticle(p, dt, layout, claimSlot);
-        if (!p.dead && p.state !== "badge") travelCount++;
-      }
-
-      /* Top up the drifting population */
-      const deficit = layout.target - travelCount;
-      if (deficit > 0 && Math.random() < dt * 5) {
-        particles.push(spawnParticle(layout));
-      }
-
-      for (const p of particles) {
-        if (p.dead) continue;
-        if (p.state === "badge") drawBadge(ctx, p, sprites);
-        else drawParticle(ctx, p, sprites);
-      }
-
-      particles = particles.filter((p) => !p.dead);
+      render(time, rotY, true);
     };
 
     const onVisibility = () => {
@@ -581,16 +473,9 @@ export default function ParticleBackground() {
     if (reduced) {
       /* Static frame for users who prefer reduced motion */
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, layout.w, layout.h);
-      drawHelix(ctx, 0, layout, sprites);
-      for (let i = 0; i < layout.target; i++) {
-        const p = spawnParticle(layout);
-        p.x = layout.cx + (Math.random() - 0.5) * layout.w * 1.05;
-        p.y = layout.cy + (Math.random() - 0.5) * layout.h * 1.05;
-        drawParticle(ctx, p, sprites);
-      }
+      ctx.clearRect(0, 0, w, h);
+      render(1.6, 0.35, false);
     } else {
-      particles = seedParticles(layout, Math.floor(layout.target * 0.7));
       raf = requestAnimationFrame(frame);
     }
 
