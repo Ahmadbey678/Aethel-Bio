@@ -1,1 +1,12 @@
-import { StrictMode } from "react";`nimport { createRoot } from "react-dom/client";`nimport "./index.css";`nimport App from "./App";`n`nconsole.log("Aethel Bio initializing...");`n`ncreateRoot(document.getElementById("root")!).render(`n  <StrictMode>`n    <App />`n  </StrictMode>`n);
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import "./index.css";
+import App from "./App";
+
+console.log("Aethel Bio initializing...");
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
