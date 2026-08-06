@@ -1,18 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  Activity,
+  AlertTriangle,
+  ArrowRight,
+  Beaker,
+  Check,
+  Database,
   Dna,
-  Search,
   FileText,
-  Upload,
+  FlaskConical,
+  Gauge,
+  Info,
   Loader2,
   RotateCcw,
+  Search,
+  Sparkles,
+  Upload,
   UploadCloud,
-  FlaskConical,
-  Beaker,
-  AlertTriangle,
   X,
-  Check,
-  Activity,
   Zap,
 } from "lucide-react";
 import type { PatientProfile } from "../types";
@@ -124,8 +129,44 @@ export default function HomeView({
     if (e.key === "Enter") onSearch();
   };
 
+  /* The preset whose values are currently loaded into the query inputs. */
+  const activePreset =
+    PRESET_CASES.find(
+      (p) => biomarker === p.biomarker && condition === p.condition && stage === p.stage,
+    ) ?? null;
+
   return (
     <div className="mx-auto max-w-6xl px-4 pb-10 pt-6 sm:px-6 lg:px-8">
+      {/* ── Hero Workspace Header ── */}
+      <header className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="font-heading text-2xl font-bold text-white">
+            Precision Trial Matching Workspace
+          </h1>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success-muted/10 px-2.5 py-1 text-[11px] font-semibold text-success">
+            <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+            </span>
+            Engine Operational
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2" aria-label="Workspace capabilities">
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-surface-raised px-2.5 py-1 text-[11px] font-medium text-text-secondary">
+            <Database className="h-3 w-3 text-primary" />
+            10k+ Protocols
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-surface-raised px-2.5 py-1 text-[11px] font-medium text-text-secondary">
+            <Gauge className="h-3 w-3 text-primary" />
+            {"<1.2s"} Match Speed
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-surface-raised px-2.5 py-1 text-[11px] font-medium text-text-secondary">
+            <Sparkles className="h-3 w-3 text-accent" />
+            Clinical-LLM v2
+          </span>
+        </div>
+      </header>
+
       <div className="grid gap-6 lg:grid-cols-2">
         {/* ── Left Column: Precision Query Builder ── */}
         <section className="rounded-2xl border border-border-subtle bg-surface-raised p-5">
@@ -239,6 +280,20 @@ export default function HomeView({
                 );
               })}
             </div>
+
+            {activePreset && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="mt-3 flex items-center gap-2 rounded-lg border border-blue-800/50 bg-blue-950/40 px-3.5 py-2 text-xs text-blue-300 animate-fade-in-up"
+              >
+                <Info className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+                <span>
+                  Selected Cohort: <span className="font-semibold text-blue-200">{activePreset.label}</span>
+                  {" — "}Biomarkers and stage mapped to primary query inputs.
+                </span>
+              </div>
+            )}
           </div>
 
           {patientProfile && (
@@ -313,14 +368,14 @@ export default function HomeView({
             }}
             className={`flex min-h-[220px] cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-6 text-center transition-all duration-150 ${
               isDragging
-                ? "border-accent bg-accent-muted/20"
-                : "border-border-subtle bg-surface hover:border-accent/40 hover:bg-accent-muted/5"
+                ? "border-blue-500 bg-blue-950/20 shadow-lg shadow-blue-500/10"
+                : "border-border-subtle bg-surface hover:border-blue-500/40 hover:bg-blue-950/5"
             }`}
           >
             {extracting ? (
               <Loader2 className="h-8 w-8 animate-spin text-accent" />
             ) : (
-              <UploadCloud className={`h-8 w-8 ${isDragging ? "text-accent" : "text-text-muted"}`} />
+              <UploadCloud className={`h-8 w-8 ${isDragging ? "text-blue-400" : "text-text-muted"}`} />
             )}
             <div>
               <p className="text-sm font-medium text-text-primary">
@@ -410,6 +465,40 @@ export default function HomeView({
                   </span>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* ── Mini preview: parsed parameters ready to match ── */}
+          {!extracting && uploadedFileName && patientProfile && (
+            <div className="mt-3 flex animate-fade-in-up flex-col gap-3 rounded-xl border border-blue-800/50 bg-blue-950/30 p-3.5 sm:flex-row sm:items-center">
+              <div className="flex flex-1 flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="font-semibold text-blue-200">Parsed:</span>
+                <span className="rounded-md border border-blue-800/40 bg-surface px-2 py-0.5 text-blue-300">
+                  Disease: {patientProfile.extractedParams.disease || "N/A"}
+                </span>
+                <span className="rounded-md border border-blue-800/40 bg-surface px-2 py-0.5 text-blue-300">
+                  Biomarkers: {patientProfile.extractedParams.mutation || "N/A"}
+                </span>
+                <span className="rounded-md border border-blue-800/40 bg-surface px-2 py-0.5 text-blue-300">
+                  Lab Values:{" "}
+                  {patientProfile.extractedParams.egfr !== null
+                    ? `eGFR ${patientProfile.extractedParams.egfr} mL/min`
+                    : "eGFR N/A"}
+                  {" · "}
+                  {patientProfile.extractedParams.platelets !== null
+                    ? `Platelets ${patientProfile.extractedParams.platelets} K/µL`
+                    : "Platelets N/A"}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={onSearch}
+                disabled={loading}
+                className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-white transition-all duration-150 hover:bg-primary-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+              >
+                {"Analyze & Match Trials"}
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
             </div>
           )}
 
