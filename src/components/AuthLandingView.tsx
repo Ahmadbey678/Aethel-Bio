@@ -1,188 +1,171 @@
-import type { CSSProperties, ReactNode } from "react";
-import {
-  ArrowRight,
-  Database,
-  Dna,
-  FileText,
-  Lock,
-  Zap,
-} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowRight, Dna, Lock, Sparkles } from "lucide-react";
+import DnaHelixCanvas from "./DnaHelixCanvas";
+
+interface AuthLandingViewProps {
+  onSignIn: () => void;
+  onContinueAsGuest?: () => void;
+}
 
 /**
- * Full-screen "locked" gate shown when there is no authenticated session.
+ * Split-hero landing for the signed-out state.
  *
- * Rendered by App.tsx in place of the workspace whenever the user signs out
- * (or arrives without a session). Signing back in via the hosted AuthModal
- * restores the workspace; the app-wide auth listener picks up the new session
- * automatically. Entering guest mode hands control straight to App.tsx, which
- * swaps in the restricted workspace.
- *
- * Modern SaaS split-hero landing: a clean 2-column layout on a deep slate
- * canvas with an ultra-subtle medical grid overlay and soft ambient glows.
- * Left column carries the brand + value proposition with a 3-card feature
- * highlight grid; right column is the glass "access portal" card. Pure CSS
- * entrance animations (staggered, honours prefers-reduced-motion) — no
- * canvas, no particles.
+ * - Left 50%: badge, headline, sub-headline and the embedded glass access
+ *   card (Sign In / Continue as Guest).
+ * - Right 50%: high-density particle DNA helix (canvas) with a soft
+ *   violet/magenta/cyan glow, on a dark slate canvas with a faint grid.
+ * - Left-to-right staggered entrance (staggerChildren ~40ms) that respects
+ *   prefers-reduced-motion.
  */
-export default function AuthLandingView({
-  onSignIn,
-  onContinueAsGuest,
-}: {
-  onSignIn: () => void;
-  onContinueAsGuest: () => void;
-}) {
+export default function AuthLandingView({ onSignIn, onContinueAsGuest }: AuthLandingViewProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [phase, setPhase] = useState<"idle" | "enter">("idle");
+
+  // Delay reduction under reduced motion: give content time to mount before
+  // the entrance fires so nothing gets cut off.
+  const prefersReduced = useMemo(
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    []
+  );
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setPhase("enter"), prefersReduced ? 40 : 220);
+    return () => window.clearTimeout(t);
+  }, [prefersReduced]);
+
+  const ready = phase === "enter";
+  const s = (ms: number) => (ready ? `${ms}ms` : "0ms");
+
   return (
-    <div className="relative min-h-screen overflow-hidden bg-slate-950">
-      {/* Ultra-subtle medical grid overlay */}
+    <div
+      ref={containerRef}
+      className="bg-slate-950 text-white min-h-screen relative overflow-hidden"
+    >
+      {/* Atmosphere layers */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,#1e293b15_1px,transparent_1px),linear-gradient(to_bottom,#1e293b15_1px,transparent_1px)] bg-[size:32px_32px]"
+        className="absolute inset-0 bg-grid [mask-image:radial-gradient(ellipse_75%_70%_at_35%_40%,black,transparent)]"
+      />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(ellipse 55% 45% at 22% 18%, rgba(139,92,246,0.10), transparent 60%)," +
+            "radial-gradient(ellipse 45% 40% at 85% 70%, rgba(6,182,212,0.06), transparent 60%)," +
+            "radial-gradient(ellipse 40% 35% at 70% 15%, rgba(217,70,239,0.05), transparent 60%)",
+        }}
+      />
+      {/* Subtle inset vignette to focus the centre */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0"
+        style={{ boxShadow: "inset 0 0 240px rgba(0,0,0,0.45)" }}
       />
 
-      {/* Soft ambient blue/cyan glows */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -left-40 -top-40 h-[34rem] w-[34rem] rounded-full bg-blue-600/10 blur-3xl"
-      />
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -bottom-44 -right-40 h-[34rem] w-[34rem] rounded-full bg-cyan-400/10 blur-3xl"
-      />
+      {/* Right-half helix layer */}
+      <div className="absolute right-0 top-0 w-1/2 h-full pointer-events-none">
+        <DnaHelixCanvas className="h-full w-full" />
+      </div>
 
-      <main className="relative z-10">
-        <div className="mx-auto grid min-h-screen w-full max-w-7xl grid-cols-1 items-center gap-12 px-8 lg:grid-cols-12">
-          {/* ── Left column — brand & value proposition ── */}
-          <div className="lg:col-span-7">
-            <div
-              className="mb-6 flex w-fit animate-fade-in-up items-center gap-2 rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1 text-xs font-semibold tracking-wider text-blue-400 motion-reduce:animate-none"
-              style={stagger(0)}
+      {/* Foreground content */}
+      <div className="relative z-10 max-w-7xl mx-auto px-8 lg:px-12 min-h-screen flex flex-col justify-center">
+        <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-12">
+          {/* Left: typography + access card */}
+          <div
+            className="max-w-lg"
+            style={{
+              opacity: ready ? 1 : 0,
+              transform: ready ? "translateY(0)" : "translateY(16px)",
+              transition: `opacity 700ms cubic-bezier(0.16,1,0.3,1) ${s(0)}, transform 700ms cubic-bezier(0.16,1,0.3,1) ${s(0)}`,
+            }}
+          >
+            <span
+              className="text-xs font-semibold tracking-widest text-violet-400 uppercase mb-4 block"
+              style={{
+                opacity: ready ? 1 : 0,
+                transform: ready ? "translateY(0)" : "translateY(12px)",
+                transition: `opacity 600ms cubic-bezier(0.16,1,0.3,1) ${s(40)}, transform 600ms cubic-bezier(0.16,1,0.3,1) ${s(40)}`,
+              }}
             >
-              <span
-                aria-hidden="true"
-                className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400 motion-reduce:animate-none"
-              />
-              CLINICAL TRIALS MATCHING ENGINE
-            </div>
+              <Sparkles className="inline-block w-3.5 h-3.5 -mt-0.5 mr-2 text-violet-400" />
+              Purpose of Aethel Bio
+            </span>
 
             <h1
-              className="mb-4 animate-fade-in-up font-heading text-4xl font-extrabold leading-tight tracking-tight text-white motion-reduce:animate-none lg:text-5xl"
-              style={stagger(80)}
+              className="text-4xl lg:text-5xl font-extrabold text-white leading-tight mb-6"
+              style={{
+                opacity: ready ? 1 : 0,
+                transform: ready ? "translateY(0)" : "translateY(12px)",
+                transition: `opacity 600ms cubic-bezier(0.16,1,0.3,1) ${s(80)}, transform 600ms cubic-bezier(0.16,1,0.3,1) ${s(80)}`,
+              }}
             >
               Precision Trial Matching Powered by{" "}
-              <span className="bg-gradient-to-r from-blue-400 via-sky-400 to-cyan-300 bg-clip-text text-transparent">
+              <span className="bg-gradient-to-r from-violet-400 via-fuchsia-400 to-cyan-400 bg-clip-text text-transparent">
                 AI Genomics.
               </span>
             </h1>
 
             <p
-              className="mb-8 max-w-xl animate-fade-in-up text-lg leading-relaxed text-slate-400 motion-reduce:animate-none"
-              style={stagger(160)}
+              className="text-slate-400 text-base leading-relaxed mb-8 max-w-lg"
+              style={{
+                opacity: ready ? 1 : 0,
+                transform: ready ? "translateY(0)" : "translateY(12px)",
+                transition: `opacity 600ms cubic-bezier(0.16,1,0.3,1) ${s(120)}, transform 600ms cubic-bezier(0.16,1,0.3,1) ${s(120)}`,
+              }}
             >
-              Instantly parse NGS reports, structure complex biomarker profiles,
-              and match oncology patients with active ClinicalTrials.gov
-              protocols.
+              Instantly parse NGS pathology reports, structure biomarker profiles,
+              and match oncology patients with active ClinicalTrials.gov protocols.
             </p>
 
-            {/* Feature highlights */}
+            {/* Embedded access card */}
             <div
-              className="grid animate-fade-in-up grid-cols-1 gap-4 motion-reduce:animate-none sm:grid-cols-3"
-              style={stagger(240)}
+              className="bg-slate-900/80 border border-slate-800 backdrop-blur-xl rounded-2xl p-6 max-w-md shadow-2xl shadow-violet-950/20"
+              style={{
+                opacity: ready ? 1 : 0,
+                transform: ready ? "translateY(0)" : "translateY(16px)",
+                transition: `opacity 700ms cubic-bezier(0.16,1,0.3,1) ${s(160)}, transform 700ms cubic-bezier(0.16,1,0.3,1) ${s(160)}`,
+              }}
             >
-              <FeatureCard
-                icon={<FileText className="h-5 w-5" aria-hidden="true" />}
-                title="Auto-Parse"
-                body="Extracts EGFR, KRAS, BRCA1"
-              />
-              <FeatureCard
-                icon={<Zap className="h-5 w-5" aria-hidden="true" />}
-                title="Live Sync"
-                body="Connected to ClinicalTrials.gov"
-              />
-              <FeatureCard
-                icon={<Database className="h-5 w-5" aria-hidden="true" />}
-                title="Unmatched Registry"
-                body="Identifies unmet trial demand"
-              />
-            </div>
-          </div>
-
-          {/* ── Right column — access portal card ── */}
-          <div
-            className="animate-fade-in-up motion-reduce:animate-none lg:col-span-5"
-            style={stagger(160)}
-          >
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-8 shadow-2xl shadow-blue-950/40 backdrop-blur-xl">
-              {/* Card header */}
-              <div className="mb-6 flex items-center gap-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-600/15 ring-1 ring-blue-500/20">
-                  <Dna className="h-6 w-6 text-blue-400" aria-hidden="true" />
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-xl bg-violet-600/15 border border-violet-500/20 flex items-center justify-center">
+                  <Dna className="w-5 h-5 text-violet-400" />
                 </div>
                 <div>
-                  <h2 className="font-heading text-lg font-bold tracking-tight text-white">
-                    Aethel Bio Workspace
-                  </h2>
-                  <p className="text-sm text-slate-400">
-                    Sign in or continue as guest to launch the matching suite.
-                  </p>
+                  <p className="text-sm font-semibold text-white">Aethel Bio Workspace</p>
+                  <p className="text-xs text-slate-500">Clinical trial intelligence</p>
                 </div>
               </div>
 
-              {/* Actions */}
               <button
+                type="button"
                 onClick={onSignIn}
-                className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 font-medium text-white shadow-lg shadow-blue-600/20 transition-all duration-150 hover:bg-blue-500 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
+                className="w-full bg-violet-600 hover:bg-violet-500 text-white py-3 font-semibold rounded-xl transition-all shadow-lg shadow-violet-600/30 flex items-center justify-center gap-2 active:scale-[0.97] cursor-pointer"
               >
-                Sign In to Account
-                <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                Sign In to Workspace
+                <ArrowRight className="w-4 h-4" />
               </button>
 
               <button
+                type="button"
                 onClick={onContinueAsGuest}
-                className="mt-3 w-full cursor-pointer rounded-xl border border-slate-700/60 bg-slate-800/80 py-3 font-medium text-slate-300 transition-all duration-150 hover:bg-slate-800 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
+                className="w-full mt-3 text-center text-slate-400 hover:text-white text-sm font-medium transition-colors flex items-center justify-center gap-2 py-2 cursor-pointer active:scale-[0.97]"
               >
                 Continue as Guest (Demo)
+                <ArrowRight className="w-4 h-4" />
               </button>
 
-              {/* Compliance footer */}
-              <p className="mt-6 flex items-center justify-center gap-1.5 text-center text-xs text-slate-500">
-                <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                Encrypted Clinical Environment • US East Node
+              <p className="text-slate-500 text-xs mt-4 block text-center flex items-center justify-center gap-1.5">
+                <Lock className="w-3 h-3 text-slate-500" />
+                Encrypted Clinical Environment &bull; US East Node
               </p>
             </div>
           </div>
+
+          {/* Right: reserved for the particle graphics */}
+          <div className="hidden lg:block" aria-hidden="true" />
         </div>
-      </main>
-    </div>
-  );
-}
-
-/* ── Feature highlight card ────────────────────────────────────────────── */
-
-function FeatureCard({
-  icon,
-  title,
-  body,
-}: {
-  icon: ReactNode;
-  title: string;
-  body: string;
-}) {
-  return (
-    <div className="group rounded-xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-sm transition-colors duration-200 hover:border-slate-700">
-      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400 ring-1 ring-blue-500/20 transition-transform duration-200 group-hover:scale-105">
-        {icon}
       </div>
-      <h3 className="text-sm font-semibold text-white">{title}</h3>
-      <p className="mt-1 text-xs leading-relaxed text-slate-400">{body}</p>
     </div>
   );
-}
-
-/* ── Staggered entrance helper (pure CSS, honours reduced motion) ──────── */
-
-function stagger(delayMs: number): CSSProperties {
-  return {
-    animationDelay: `${delayMs}ms`,
-    animationFillMode: "backwards",
-  };
 }

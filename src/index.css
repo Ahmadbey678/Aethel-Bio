@@ -58,6 +58,13 @@ body {
   background-attachment: fixed;
 }
 
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--color-border-default); border-radius: 3px; }
@@ -134,7 +141,8 @@ body {
   .animate-slide-in-right,
   .animate-slide-out-right,
   .animate-fade-in,
-  .animate-fade-out {
+  .animate-fade-out,
+  .animate-fade-in-up {
     animation-duration: 0.01ms;
     animation-iteration-count: 1;
   }
