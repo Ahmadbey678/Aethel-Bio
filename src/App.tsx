@@ -641,7 +641,10 @@ export default function App() {
           onClose={() => setIsAuthModalOpen(false)}
           onContinueAsGuest={handleContinueAsGuest}
         />
-        <AuthLandingView onSignIn={() => setIsAuthModalOpen(true)} />
+        <AuthLandingView
+          onSignIn={() => setIsAuthModalOpen(true)}
+          onContinueAsGuest={handleContinueAsGuest}
+        />
       </>
     );
   }
