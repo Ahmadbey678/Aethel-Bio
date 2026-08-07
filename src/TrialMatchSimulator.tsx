@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, type CSSProperties } from "react";
 import { jsPDF } from "jspdf";
-import { X, ArrowLeft, CheckCircle, AlertTriangle, Plus, Trash2, Gauge, ChevronDown, ChevronUp, Dna, Stethoscope, Beaker, Brain, FlaskConical, Copy, Check, FileText, Loader2, MapPin, Info } from "lucide-react";
+import { X, ArrowLeft, BadgeCheck, CheckCircle, AlertTriangle, Plus, Trash2, Gauge, ChevronDown, ChevronUp, Dna, Stethoscope, Beaker, Brain, FlaskConical, Copy, Check, FileText, Loader2, MapPin, SlidersHorizontal, Info } from "lucide-react";
 import {
   type ParsedCriteria,
   parseEligibilityCriteria,
@@ -35,6 +35,174 @@ function normalizeMutationForOutreach(text: string): string {
   return text
     .replace(/p\.\s*Gin\b/g, "p.Gln")                    // "p. Gin" → "p.Gln"
     .replace(/(Profs)\s+(\d+)/g, "$1*$2");               // "Profs 74" → "Profs*74"
+}
+
+/* ── Protocol Waiver Sensitivity ─────────────────────────
+   Extracts lab-value thresholds (eGFR, platelets) from the
+   eligibility criteria / custom rule text, then recomputes
+   which currently-failing criteria fall within a clinician-set
+   tolerance offset — those become "Eligible via Protocol Waiver
+   Request" (still requires sponsor approval). */
+
+export interface WaiverEntry {
+  metric: "eGFR" | "Platelets";
+  percent: number;
+  required: number;
+  patient: number;
+  unit: string;
+}
+
+export interface WaiverAnalysis {
+  waiverCount: number;
+  waiverMetrics: string[];
+  byInclusionIndex: Record<number, WaiverEntry | undefined>;
+  byRuleId: Record<string, WaiverEntry | undefined>;
+}
+
+type LabMetricKey = "egfr" | "platelets";
+
+interface LabBound {
+  direction: "min" | "max";
+  required: number;
+}
+
+/** Pull the numeric threshold(s) a criterion imposes on a lab metric. */
+function extractLabBounds(text: string): { metric: LabMetricKey; bounds: LabBound[] } | null {
+  const lower = text.toLowerCase();
+  const isEGFR = /\begfr\b|gfr|creatinine\s*clearance|crcl|renal\s*function/.test(lower);
+  const isPLT = /\bplatelet\b|\bplt\b|thrombocyte/.test(lower);
+  if (!isEGFR && !isPLT) return null;
+  const metric: LabMetricKey = isEGFR ? "egfr" : "platelets";
+  const bounds: LabBound[] = [];
+
+  const between = lower.match(/between\s+(\d+(?:\.\d+)?)\s*(?:-|–|and|to)\s*(\d+(?:\.\d+)?)/);
+  if (between) {
+    bounds.push({ direction: "min", required: parseFloat(between[1]) });
+    bounds.push({ direction: "max", required: parseFloat(between[2]) });
+    return { metric, bounds };
+  }
+
+  const minPatterns = [
+    /(?:≥|>=|at\s*least|no\s*less\s*than|greater\s*than\s*or\s*equal)\s*(\d+(?:\.\d+)?)/i,
+    />\s*(\d+(?:\.\d+)?)/,
+    /(\d+(?:\.\d+)?)\s*(?:or\s*)?(?:greater|more)/,
+  ];
+  for (const re of minPatterns) {
+    const m = lower.match(re);
+    if (m) {
+      bounds.push({ direction: "min", required: parseFloat(m[1]) });
+      break;
+    }
+  }
+
+  if (bounds.length === 0) {
+    const maxPatterns = [
+      /(?:≤|<=|at\s*most|no\s*more\s*than|less\s*than\s*or\s*equal)\s*(\d+(?:\.\d+)?)/i,
+      /<\s*(\d+(?:\.\d+)?)/,
+      /(\d+(?:\.\d+)?)\s*(?:or\s*)?less/,
+    ];
+    for (const re of maxPatterns) {
+      const m = lower.match(re);
+      if (m) {
+        bounds.push({ direction: "max", required: parseFloat(m[1]) });
+        break;
+      }
+    }
+  }
+
+  // Fallback: bare number immediately after the metric keyword.
+  if (bounds.length === 0) {
+    const needles = isEGFR
+      ? ["egfr", "gfr", "creatinine clearance", "crcl", "renal function"]
+      : ["platelet", "plt", "thrombocyte"];
+    const idx = needles.reduce(
+      (best, w) => {
+        const at = lower.indexOf(w);
+        return at !== -1 && (best === -1 || at < best) ? at : best;
+      },
+      -1,
+    );
+    if (idx !== -1) {
+      const m = lower.slice(idx).match(/(\d+(?:\.\d+)?)/);
+      if (m) bounds.push({ direction: "min", required: parseFloat(m[1]) });
+    }
+  }
+
+  return bounds.length > 0 ? { metric, bounds } : null;
+}
+
+/**
+ * Re-evaluate every lab-bearing criterion / custom rule against the patient's
+ * values, applying the tolerance offset to the protocol threshold. Only
+ * criteria that FAIL the original requirement but PASS the adjusted one are
+ * flagged as waiver-eligible.
+ */
+export function analyzeWaivers(
+  criteria: ParsedCriteria,
+  rules: CustomRule[],
+  patient: PatientProfile | null | undefined,
+  offsetPct: number,
+): WaiverAnalysis {
+  const byInclusionIndex: WaiverAnalysis["byInclusionIndex"] = {};
+  const byRuleId: WaiverAnalysis["byRuleId"] = {};
+  const waiverMetrics: string[] = [];
+
+  const consider = (
+    text: string,
+    patientVal: number | null,
+    source: "inclusion" | "custom",
+    index: number | string,
+  ) => {
+    if (patientVal === null || offsetPct <= 0) return;
+    const found = extractLabBounds(text);
+    if (!found) return;
+
+    for (const bound of found.bounds) {
+      const meetsOriginal =
+        bound.direction === "min" ? patientVal >= bound.required : patientVal <= bound.required;
+      if (meetsOriginal) continue;
+
+      const adjusted =
+        bound.direction === "min"
+          ? bound.required * (1 - offsetPct / 100)
+          : bound.required * (1 + offsetPct / 100);
+      const meetsAdjusted =
+        bound.direction === "min" ? patientVal >= adjusted : patientVal <= adjusted;
+      if (!meetsAdjusted) continue;
+
+      const metricLabel = found.metric === "egfr" ? "eGFR" : "Platelets";
+      const unit = found.metric === "egfr" ? " mL/min" : " ×10⁹/L";
+      const entry: WaiverEntry = {
+        metric: metricLabel,
+        percent: offsetPct,
+        required: bound.required,
+        patient: patientVal,
+        unit,
+      };
+      if (source === "inclusion") byInclusionIndex[index as number] = entry;
+      else byRuleId[index as string] = entry;
+      const label = `${metricLabel} within ${offsetPct}% variance`;
+      if (!waiverMetrics.includes(label)) waiverMetrics.push(label);
+    }
+  };
+
+  if (!patient) return { waiverCount: 0, waiverMetrics: [], byInclusionIndex: {}, byRuleId: {} };
+
+  criteria.inclusion.forEach((item, i) => {
+    consider(item, patient.extractedParams.egfr, "inclusion", i);
+    consider(item, patient.extractedParams.platelets, "inclusion", i);
+  });
+  rules.forEach((rule) => {
+    consider(rule.text, patient.extractedParams.egfr, "custom", rule.id);
+    consider(rule.text, patient.extractedParams.platelets, "custom", rule.id);
+  });
+
+  return {
+    waiverCount: Object.keys(byInclusionIndex).length + Object.keys(byRuleId).length,
+    waiverMetrics,
+    byInclusionIndex,
+    byRuleId,
+  };
 }
 
 /* ── Circular Gauge ──────────────────────────────────── */
@@ -148,6 +316,7 @@ function CriteriaSection({
   checkedMap,
   onToggle,
   accentColor,
+  waiverByIndex = {},
 }: {
   title: string;
   icon: React.ReactNode;
@@ -155,6 +324,7 @@ function CriteriaSection({
   checkedMap: Record<number, boolean>;
   onToggle: (index: number) => void;
   accentColor: string;
+  waiverByIndex?: Record<number, WaiverEntry | undefined>;
 }) {
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
@@ -211,6 +381,12 @@ function CriteriaSection({
                   >
                     {item}
                   </span>
+                  {waiverByIndex[i] && (
+                    <span className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] font-semibold text-warning">
+                      <BadgeCheck className="h-3 w-3" />
+                      Eligible via Protocol Waiver Request
+                    </span>
+                  )}
                   {isLong && (
                     <button
                       type="button"
@@ -249,11 +425,13 @@ function CustomRuleInput({
   onAdd,
   onToggle,
   onRemove,
+  waiverById = {},
 }: {
   rules: CustomRule[];
   onAdd: (text: string) => void;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
+  waiverById?: Record<string, WaiverEntry | undefined>;
 }) {
   const [input, setInput] = useState("");
 
@@ -311,6 +489,12 @@ function CustomRuleInput({
                   )}
                 </button>
                 <span className="flex-1 text-sm text-text-primary">{rule.text}</span>
+                {waiverById[rule.id] && (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold text-warning">
+                    <BadgeCheck className="h-2.5 w-2.5" />
+                    Waiver
+                  </span>
+                )}
                 {!rule.required && (
                   <button
                     onClick={() => onRemove(rule.id)}
@@ -1071,6 +1255,13 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
   const [customRules, setCustomRules] = useState<CustomRule[]>([]);
   const [showReferral, setShowReferral] = useState(false);
 
+  /* ── Protocol Waiver Sensitivity ── */
+  const [waiverTolerance, setWaiverTolerance] = useState(0);
+  const waiverAnalysis = useMemo(
+    () => analyzeWaivers(criteria, customRules, patientProfile, waiverTolerance),
+    [criteria, customRules, patientProfile, waiverTolerance],
+  );
+
   /* ── Detect organ system mismatch ── */
   const isOrganMismatch = useMemo(() => {
     if (!patientProfile) return false;
@@ -1262,6 +1453,134 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
             <PatientInfoPanel profile={patientProfile} />
           )}
 
+          {/* Protocol Waiver Sensitivity Card */}
+          {patientProfile && (
+            <section
+              aria-labelledby="waiver-title"
+              className="rounded-xl border border-slate-800 bg-slate-900/60 p-4"
+            >
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent-muted">
+                    <SlidersHorizontal className="h-3.5 w-3.5 text-accent" />
+                  </span>
+                  <div>
+                    <h3 id="waiver-title" className="text-sm font-semibold text-text-primary">
+                      Protocol Waiver Sensitivity
+                    </h3>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-text-muted">
+                      Relax protocol lab thresholds to surface borderline eligibility that may still
+                      be granted sponsor approval.
+                    </p>
+                  </div>
+                </div>
+                <span
+                  className={`shrink-0 rounded-md border px-2 py-0.5 font-mono text-xs font-semibold tabular-nums transition-all duration-150 ${
+                    waiverTolerance !== 0
+                      ? "border-warning/30 bg-warning/10 text-warning"
+                      : "border-border-default bg-surface text-text-muted"
+                  }`}
+                >
+                  {waiverTolerance > 0 ? `+${waiverTolerance}%` : `${waiverTolerance}%`}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] text-text-muted">
+                <span>-20%</span>
+                <span className="font-medium text-text-secondary">Tolerance offset</span>
+                <span>+20%</span>
+              </div>
+              <input
+                id="waiver-tolerance"
+                type="range"
+                min={-20}
+                max={20}
+                step={1}
+                value={waiverTolerance}
+                onChange={(e) => setWaiverTolerance(Number(e.target.value))}
+                aria-label="Lab value tolerance offset"
+                aria-valuetext={`${waiverTolerance > 0 ? "plus " : ""}${waiverTolerance} percent`}
+                className="range-electric mt-1.5"
+                style={{ "--range-fill": `${((waiverTolerance + 20) / 40) * 100}%` } as CSSProperties}
+              />
+              <div className="mt-2 flex items-center justify-between text-[10px] text-text-muted">
+                <span>Strict</span>
+                <span>Lenient</span>
+              </div>
+
+              <p
+                role="status"
+                aria-live="polite"
+                className={`mt-3 rounded-lg px-3 py-2 text-[11px] leading-relaxed transition-all duration-150 ${
+                  waiverAnalysis.waiverCount > 0
+                    ? "border border-warning/25 bg-warning/10 text-warning"
+                    : "border border-border-subtle bg-surface text-text-muted"
+                }`}
+              >
+                {waiverTolerance === 0 ? (
+                  "Move the slider to relax lab thresholds — borderline criteria will flag as waiver-eligible."
+                ) : waiverAnalysis.waiverCount > 0 ? (
+                  <>
+                    <strong>
+                      {waiverAnalysis.waiverCount} borderline{" "}
+                      {waiverAnalysis.waiverCount === 1 ? "criterion" : "criteria"}
+                    </strong>{" "}
+                    now eligible via waiver request ({waiverAnalysis.waiverMetrics.join(", ")}).
+                  </>
+                ) : (
+                  "No borderline lab criteria fall within this tolerance — the patient meets every measurable protocol threshold."
+                )}
+              </p>
+
+              {waiverAnalysis.waiverCount > 0 && (
+                <div className="mt-3 space-y-2">
+                  {Object.entries(waiverAnalysis.byInclusionIndex).map(([index, entry]) => {
+                    if (!entry) return null;
+                    return (
+                      <div key={`inc-${index}`} className="flex items-start gap-2 rounded-lg bg-surface/60 px-3 py-2">
+                        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-warning/30 bg-warning/10">
+                          <BadgeCheck className="h-3 w-3 text-warning" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-warning">
+                            Eligibility via Protocol Waiver Request
+                          </p>
+                          <p className="mt-0.5 text-[11px] leading-relaxed text-text-secondary">
+                            Requires Sponsor Approval — {entry.metric} within {entry.percent}% variance
+                            (patient {entry.patient}
+                            {entry.unit} vs protocol {entry.required}
+                            {entry.unit})
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {Object.entries(waiverAnalysis.byRuleId).map(([id, entry]) => {
+                    if (!entry) return null;
+                    return (
+                      <div key={`rule-${id}`} className="flex items-start gap-2 rounded-lg bg-surface/60 px-3 py-2">
+                        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-warning/30 bg-warning/10">
+                          <BadgeCheck className="h-3 w-3 text-warning" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-warning">
+                            Eligibility via Protocol Waiver Request
+                          </p>
+                          <p className="mt-0.5 text-[11px] leading-relaxed text-text-secondary">
+                            Requires Sponsor Approval — {entry.metric} within {entry.percent}% variance
+                            (patient {entry.patient}
+                            {entry.unit} vs protocol {entry.required}
+                            {entry.unit})
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
           {/* Trial Summary */}
           <section className="rounded-xl border border-border-subtle bg-surface-raised p-4">
             <h2 className="font-heading text-base font-semibold leading-snug text-text-primary">
@@ -1311,6 +1630,7 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
                 checkedMap={inclusionMap}
                 onToggle={toggleInclusion}
                 accentColor="text-success"
+                waiverByIndex={waiverAnalysis.byInclusionIndex}
               />
             </section>
           )}
@@ -1343,6 +1663,7 @@ export default function TrialMatchSimulator({ study, patientProfile, onClose }: 
               onAdd={addCustomRule}
               onToggle={toggleCustom}
               onRemove={removeCustom}
+              waiverById={waiverAnalysis.byRuleId}
             />
           </section>
 
